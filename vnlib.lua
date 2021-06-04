@@ -2,11 +2,6 @@
 
 vnlib = {}
 
--- DEBUGGING CODE, REMOVE BEFORE RELEASE
-d = require("mfppln")
-d.init()
-
-
 -- LOCAL TABLES AND VARIABLES
 
 -- VALUES IN VNLIB.CONF
@@ -224,8 +219,6 @@ function recalcScales(scale)
 				end
 			end
 		elseif scale == "eqmax" then
-			--
-			d.dolog("Entering eqMax")
 			local tallest, widest, lscale = 0,0,0
 			for k,v in pairs(chars) do
 				for i, w in ipairs(v.images) do
@@ -233,30 +226,23 @@ function recalcScales(scale)
 					if images[w.image].height > tallest then tallest = images[w.image].height end
 				end
 			end
-			d.dolog("Tallest is: " .. tallest .. ", widest is: " .. widest)
-			lscale = math.min(widest/areas[targets.stage].geometry.width, tallest/areas[targets.stage].geometry.height)
-			d.dolog("Reference scale is: " .. lscale)
+			lscale = math.min(areas[targets.stage].geometry.width / widest, areas[targets.stage].geometry.height / tallest)
+			if lscale > 1 then
+				
+			end
 			for k,v in pairs(chars) do
 				for i, w in ipairs(v.images) do
-				
-				d.dolog("Image: " .. w.image .. " in char " .. k .. ":")
-				d.dolog("Previous scale is: " .. w.scale .. " and new scale is: " .. lscale)
-				d.dolog("Previous height: " .. images[w.image].height * w.scale)
-				d.dolog("New height: " .. images[w.image].height * lscale)
-				
 					w.scale = lscale
 					w.left = areas[targets.stage].geometry.centerx - ((images[w.image].width * w.scale) / 2)
 					w.top = areas[targets.stage].geometry.top + (areas[targets.stage].geometry.height - (images[w.image].height * w.scale))
 				end
 			end
-			-- 
-			
 		end
 	end
 end
 
 local function createTile(imageref, dw, dh)
-	local sdata = love.image.newImageData(config.resdir .. imageref .. ".png")
+	local sdata = love.image.newImageData(config.basedir .. imageref .. ".png")
 	local sw, sh = sdata:getDimensions()
 	local ddata = love.image.newImageData(dw, dh)
 	for x = 0, dw-1 do
@@ -471,9 +457,9 @@ end
 
 function getDefaultFonts()
 	
-	vnlib.addFont("dialog", tonumber(config.dlg_font_size), config.dlg_font)
-	vnlib.addFont("choice", tonumber(config.choice_font_size), config.choice_font)
-	vnlib.addFont("charname", tonumber(config.name_font_size), config.name_font)
+	vnlib.addFont("dialog", tonumber(config.dlg_font_size), config.basedir .. config.dlg_font)
+	vnlib.addFont("choice", tonumber(config.choice_font_size), config.basedir .. config.choice_font)
+	vnlib.addFont("charname", tonumber(config.name_font_size), config.basedir .. config.name_font)
 	
 end
 
@@ -509,7 +495,7 @@ function vnlib.init(width, height, basedir)
 		bottom = "100%",
 		background = {
 			type = "color",
-			color = { 0.1, 0.1, 0.25 }
+			color = { 0.1, 0.1, 0.15 }
 		},
 		foreground = false
 	})
@@ -624,6 +610,17 @@ function vnlib.getCharImage(cid, imgname)
 	return rtv
 end
 
+function vnlib.getCharWidth(cid)
+	
+	return images[chars[cid].images[chars[cid].actimg].image].width * chars[cid].images[chars[cid].actimg].scale
+	
+end
+
+function vnlib.getCharHeight(cid)
+	
+	return images[chars[cid].images[chars[cid].actimg].image].height * chars[cid].images[chars[cid].actimg].scale
+	
+end
 
 function vnlib.showChar(cid, imgp)
 	chars[cid].visible = true
@@ -652,6 +649,20 @@ function vnlib.moveChar(cid, posx, posy)
 	chars[cid].images[chars[cid].actimg].top = posy or chars[cid].images[chars[cid].actimg].top
 end
 
+function vnlib.distribChars(charar)
+	
+	local tchars = #charar
+	local l = 1 / (tchars +1)
+	local offset, gridline, charwidth, charscale = 0,0,0,0
+	offset = areas[targets.stage].geometry.left
+	for i, v in ipairs(charar) do
+		gridline = areas[targets.stage].geometry.width * (i*l)
+		charwidth = vnlib.getCharWidth(v)
+		vnlib.moveChar(v,  offset + (gridline - (charwidth / 2)))
+	end
+	
+end
+
 
 function vnlib.eqScales()
 	
@@ -661,36 +672,23 @@ function vnlib.eqScales()
 	local widest, tallest = 0,0
 	local wratio, hratio = 0,0
 	for k, v in pairs(chars) do
-		
 		for i, w in ipairs(v.images) do
-			
 			if w.scale < minscale then minscale = w.scale end
 			if w.scale > maxscale then maxscale = w.scale end
 			table.insert(tmp, w.image)
-			
 		end
-		
 	end
-	
 	if minscale < 1 then
-		
 		recalcScales(minscale)
-		
 	else
-		
 		for _, v in ipairs(tmp) do
-			
 			if images[v].width > widest then widest = images[v].width end
 			if images[v].height > tallest then tallest = images[v].height end
-			
 		end
-		
 		wratio = widest / areas[targets.stage].geometry.width
 		hratio = tallest / areas[targets.stage].geometry.height
 		recalcScales(math.min(1/wratio, 1/hratio))
-		
 	end
-	
 end
 
 
@@ -755,7 +753,6 @@ function vnlib.addArea(aname, adef)
 		background = bgt,
 		foreground = adef.foreground
 	}
-	
 end
 
 function vnlib.getAreaSize(aname, axis)
