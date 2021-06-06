@@ -1,13 +1,14 @@
 -- MAKING LIBRARY ACCESSIBLE
 
 vnlib = {}
+vnlib.ver = 1
+vnlib.subver = 2
+
 
 -- LOCAL TABLES AND VARIABLES
 
 -- VALUES IN VNLIB.CONF
-local config = {
-	resdir = "vnengine/"
-}
+local config = {}
 
 -- SCREEN SIZE AND CENTER POSITIONS
 -- VALUES USED WHEN ADDING AN AREA
@@ -59,6 +60,12 @@ local dialog_index = 0
 -- key, and [character name as value.
 local reps = {}
 
+-- Similar to reps, except it's indexed
+-- and values are "_uservar". Replacement
+-- is performed ijñnmediately prior to
+-- render
+local usereps = {}
+
 -- TABLE CONTAINING SOME MUST HAVE
 -- FONTS. DIALOG, CHOICE AND CHARNAME
 -- MORE CAN BE ADDED
@@ -107,6 +114,12 @@ local checkCoord = {}
 -- PUT A CALL TO IT IN IT'S main.lua
 local touch = {}
 
+-- CONTAINER FOR COMPARING VALUES
+-- WITH USER-DEFINED VARS
+local compareTo = {}
+
+-- Returns true for strings that end in a
+-- % sign
 local function isper(val)
 	if (type(val) == "string") and (val:sub(#val,#val) == "%") then
 		return true
@@ -115,21 +128,28 @@ local function isper(val)
 	end
 end
 
+-- Draws the solid color background
+-- of an area
 function drawbg.color(adef)
 	love.graphics.setColor(adef.background.color[1], adef.background.color[2], adef.background.color[3])
 	love.graphics.rectangle("fill", adef.geometry.left, adef.geometry.top, adef.geometry.width, adef.geometry.height)
 end
 
+-- Draws the image background of an
+-- area
 function drawbg.image(adef)
 	love.graphics.setColor(1,1,1,1)
 	love.graphics.draw(images[adef.background.image].image, adef.geometry.left, adef.geometry.top, 0, adef.background.scalex, adef.background.scaley)
 end
 
+-- Draws the active image of a character
 local function drawChar(cdef)
 	love.graphics.setColor(1,1,1,1)
 	love.graphics.draw(images[cdef.images[cdef.actimg].image].image, cdef.images[cdef.actimg].left, cdef.images[cdef.actimg].top, 0, cdef.images[cdef.actimg].scale)
 end
 
+-- dumps the content of vnlib.conf to
+-- the [config] table
 local function readconf(dir)
 	local r2g, g2b = 0
 	local r,g,b = 0,0,0
@@ -150,30 +170,80 @@ local function readconf(dir)
 	end
 end
 
-function drawDialog.dialog(ddef)
-	love.graphics.setColor(chars[ddef.char].color[1] or config.def_font_color[1], chars[ddef.char].color[2] or config.def_font_color[2], chars[ddef.char].color[3] or config.def_font_color[3])
-	love.graphics .print(ddef.line, fonts.dialog, areas[targets.dialog].geometry.left+5, areas[targets.dialog].geometry.top+5)
+-- Checks for references to uservars in
+-- in [str], if found, it replaces it with
+-- the uservar value
+function rtRep(str)
+	local nustr = str
+	for k, v in pairs(usereps) do
+		nustr = nustr:gsub(v, tostring(uservars[k]))
+	end
+	return nustr
 end
 
+-- Draws a normal dialog line in the
+-- dialog area
+function drawDialog.dialog(ddef)
+	love.graphics.setColor(chars[ddef.char].color[1] or config.def_font_color[1], chars[ddef.char].color[2] or config.def_font_color[2], chars[ddef.char].color[3] or config.def_font_color[3])
+	love.graphics .print(rtRep(ddef.line), fonts.dialog, areas[targets.dialog].geometry.left+5, areas[targets.dialog].geometry.top+5)
+end
+
+-- Draws a choice type dialog
 function drawDialog.choice(ddef)
 	love.graphics.setColor(config.def_font_color[1], config.def_font_color[2], config.def_font_color[3])
-	love.graphics.print(ddef.caption, fonts.choice, areas[targets.dialog].geometry.left+5, areas[targets.dialog].geometry.top+5)
+	love.graphics.print(rtRep(ddef.caption), fonts.choice, areas[targets.dialog].geometry.left+5, areas[targets.dialog].geometry.top+5)
 	for i, v in ipairs(ddef.choices) do
-		love.graphics.print(v.choice, fonts.choice, v.left, v.top)
 		love.graphics.line(areas[targets.dialog].geometry.left, v.top, areas[targets.dialog].geometry.right, v.top)
+		if evalCond(v.cond) then
+			love.graphics.print(rtRep(v.choice), fonts.choice, v.left, v.top)
+		end
 	end
 	love.graphics.line(areas[targets.dialog].geometry.left, ddef.lastline, areas[targets.dialog].geometry.right, ddef.lastline)
 end
 
+-- Just closes the game
 function drawDialog.quit()
 	love.event.quit()
 end
 
+-- Draws the caption of an interaction
+-- dialog
 function drawDialog.interact()
 	love.graphics.setColor(config.def_font_color[1], config.def_font_color[2], config.def_font_color[3])
-	love.graphics.print(dialogs[dialog_index].line, fonts.dialog, areas[targets.dialog].geometry.left+5, areas[targets.dialog].geometry.top+5)
+	love.graphics.print(rtRep(dialogs[dialog_index].line), fonts.dialog, areas[targets.dialog].geometry.left+5, areas[targets.dialog].geometry.top+5)
 end
 
+-- Takes a condition definition and
+-- passes it to the apropriate function
+-- returns true if no condition is defined
+function evalCond(condef)
+	if not condef then
+		return true
+	else
+		return compareTo[condef.type](condef.var, condef.val)
+	end
+end
+
+-- returns true if uservars.[var] is equal
+-- to [val], false otherwise
+function compareTo.equal(var, val)
+	return val == uservars[var]
+end
+
+-- returns true if uservars.[var] is more
+-- than [val], false otherwise
+function compareTo.more(var, val)
+	return val > uservars[var]
+end
+
+-- returns true if uservars.[var] is less
+-- than [val], false otherwise
+function compareTo.less(var, val)
+	return val < uservars[var]
+end
+
+-- reads the content of the received
+-- directory and caches PNG images
 local function cacheimages(dir)
 	local data = ""
 	local w, h = 0,0
@@ -191,7 +261,9 @@ local function cacheimages(dir)
 	end
 end
 
-
+-- Recalculates the scales of all images
+-- for all added characters, according to
+-- the [scale] parameter
 function recalcScales(scale)
 	local iw, ih = 0,0
 	local wrat, hrat = 0, 0
@@ -228,7 +300,7 @@ function recalcScales(scale)
 			end
 			lscale = math.min(areas[targets.stage].geometry.width / widest, areas[targets.stage].geometry.height / tallest)
 			if lscale > 1 then
-				
+				lscale = 1/lscale
 			end
 			for k,v in pairs(chars) do
 				for i, w in ipairs(v.images) do
@@ -241,6 +313,11 @@ function recalcScales(scale)
 	end
 end
 
+-- Takes a cached image reference
+-- (file name without extension) and
+-- creates a new image with the
+-- image tiled to specified size [tw], 
+-- [th], caches it, and returns image ref
 local function createTile(imageref, dw, dh)
 	local sdata = love.image.newImageData(config.basedir .. imageref .. ".png")
 	local sw, sh = sdata:getDimensions()
@@ -262,6 +339,9 @@ local function createTile(imageref, dw, dh)
 	return nuref
 end
 
+-- Makes a dialog line (for any kind of
+-- dialog) fit horizontally within [tw] by
+-- adding new lines (\n)
 local function adjustLine(str, tw, fontref)
 	local spaces = {}
 	local found = false
@@ -288,11 +368,13 @@ local function adjustLine(str, tw, fontref)
 	return rtv
 end
 
+-- Reads the dialog from a file and
+-- dumps it into [dialogs] table
 local function getDialog(file)
 	dialog = {}
 	local topts, acumh, theight, telems = 0,0,0,0
 	local tfound = false
-	local nuopt, nuact = {}, {}
+	local nuopt, nuact, cond = {}, {}, {}
 	local predlg = require(config.basedir .. file)
 	for i, v  in ipairs(predlg) do
 		if v.line then
@@ -316,7 +398,17 @@ local function getDialog(file)
 				if fonts.dialog:getWidth(w.choice) >= areas[targets.dialog].geometry.width then
 					w.choice = adjustLine(w.choice, areas[targets.dialog].geometry.width, "dialog")
 				end
+				if w.cond then
+					cond = {
+						var = w.cond.compare,
+						type = w.cond.method,
+						val = w.cond.value
+					}
+				else
+					cond = nil
+				end
 				nuopt[i] = {
+					cond = cond,
 					choice = w.choice,
 					next = w.next,
 					top = areas[targets.dialog].geometry.top + acumh + 5,
@@ -335,7 +427,6 @@ local function getDialog(file)
 		elseif v.char == "interact" then
 			for j, w in ipairs(v.actions) do
 				if type(w.whentouch) == "string" then
-				
 					if w.whentouch == "always" then
 						coords = { type = "always" }
 					else
@@ -372,6 +463,9 @@ local function getDialog(file)
 	control = dialogs[dialog_index].type
 end
 
+-- Reruns the replacements on a dialog
+-- useful when addingba new character
+-- after a dialog has been loaded
 local function updateDialog()
 	for i, v in ipairs(dialogs) do
 		for k, w in pairs(reps) do
@@ -399,6 +493,9 @@ local function updateDialog()
 	end
 end
 
+-- Advances dialog pointer by one and
+-- transfers flow control to the correct
+-- function
 local function advanceDialog()
 	if dialog_index < #dialogs then
 		dialog_index = dialog_index + 1
@@ -406,24 +503,32 @@ local function advanceDialog()
 	end
 end
 
+-- Performs tap/click (touch) detection
+-- for normal dialogs
 function touch.dialog(x,y)
 	if (x >= areas[targets.dialog].geometry.left) and (x <= areas[targets.dialog].geometry.right) and (y >= areas[targets.dialog].geometry.top) and (y <= areas[targets.dialog].geometry.bottom) then
 		advanceDialog()
 	end
 end
 
+-- Performs touch detection for choice
+-- type dialogs
 function touch.choice(x, y)
 	for i, v in ipairs(dialogs[dialog_index].choices) do
-		if (x >= v.left) and (x <= v.right) and (y >= v.top) and (y <= v.bottom) then
-			if v.next == "end" then
-				drawDialog.quit()
-			else
-				getDialog(v.next)
+		if evalCond(v.cond) then
+			if (x >= v.left) and (x <= v.right) and (y >= v.top) and (y <= v.bottom) then
+				if v.next == "end" then
+					drawDialog.quit()
+				else
+					getDialog(v.next)
+				end
 			end
 		end
 	end
 end
 
+-- Performs touch detection for
+-- interact type dialogs
 function touch.interact(x, y)
 	local actions = dialogs[dialog_index].actions
 	if actions[1].coords.type == "always" then
@@ -442,10 +547,14 @@ function touch.interact(x, y)
 	end
 end
 
+-- returns true if [x] and [y] are within 
+-- [coordef] and falsebotherwise
 function checkCoord.direct(x, y, coordef, _)
 	return ((x >= coordef.left) and (x <= coordef.right) and (y >= coordef.top) and (y <= coordef.bottom))
 end
 
+-- returns true if [x] and [y] are within 
+-- [cid] character's current image coords
 function checkCoord.char(x, y, _, cid)
 	local refleft = chars[cid].images[chars[cid].actimg].left
 	local reftop = chars[cid].images[chars[cid].actimg].top
@@ -454,51 +563,34 @@ function checkCoord.char(x, y, _, cid)
 	return (x >= refleft) and (x <= refright) and (y >= reftop) and (y <= refbottom)
 end
 
-
+-- Caches the fonts specified in .conf
+-- file
 function getDefaultFonts()
-	
+	local lines = 7
+	if (not config.dlg_font_size) or (config.dlg_font_size = "") then
+		
 	vnlib.addFont("dialog", tonumber(config.dlg_font_size), config.basedir .. config.dlg_font)
 	vnlib.addFont("choice", tonumber(config.choice_font_size), config.basedir .. config.choice_font)
 	vnlib.addFont("charname", tonumber(config.name_font_size), config.basedir .. config.name_font)
-	
 end
 
 
 -- ACCESIBLE FUNCTIONS
 
-function vnlib.init(width, height, basedir)
-	-- init geometry
+function vnlib.init(width, height, confdir)
+	confdir = confdir or ""
+	-- init screen geometry
 	scr.height = height
 	scr.width = width
 	scr.centerx = width/2
 	scr.centery = width/2
 	-- read config file
-	readconf(basedir)
+	readconf(confdir)
 	-- cache images
 	cacheimages(config.basedir .. config.resdir)
-	-- add areas
-	vnlib.addArea("stage", {
-		left = 0,
-		right = "100%",
-		top = 0,
-		bottom = "75%",
-		background = {
-			type = "tile",
-			tile = "image"
-		},
-		foreground = false
-	})
-	vnlib.addArea("dlgarea", {
-		left = 0,
-		right = "100%",
-		top = "75%",
-		bottom = "100%",
-		background = {
-			type = "color",
-			color = { 0.1, 0.1, 0.15 }
-		},
-		foreground = false
-	})
+	-- run start code
+	local fullpath = love.filesystem.getSource() .. config.basedir
+	dofile(fullpath .. "start.lua")
 	-- get and store fonts for dialogs, choices and char names
 	getDefaultFonts()
 	-- load uaer actions
@@ -506,7 +598,6 @@ function vnlib.init(width, height, basedir)
 	if useractions.start then useractions.start() end
 	-- load dialog
 	getDialog(config.entry_point)
-	
 end
 
 
@@ -523,7 +614,7 @@ function vnlib.draw()
 			drawChar(v)
 		end
 	end
-	-- draw dialog (or choices)
+	-- draw dialog (or choices (or caption))
 	drawDialog[dialogs[dialog_index].type](dialogs[dialog_index])
 end
 
@@ -611,16 +702,16 @@ function vnlib.getCharImage(cid, imgname)
 end
 
 function vnlib.getCharWidth(cid)
-	
 	return images[chars[cid].images[chars[cid].actimg].image].width * chars[cid].images[chars[cid].actimg].scale
-	
 end
 
 function vnlib.getCharHeight(cid)
-	
 	return images[chars[cid].images[chars[cid].actimg].image].height * chars[cid].images[chars[cid].actimg].scale
-	
 end
+
+function vnlib.getCharPos(cid)
+	return chars[cid].images[chars[cid].actimg].left, chars[cid].images[chars[cid].actimg].top
+end 
 
 function vnlib.showChar(cid, imgp)
 	chars[cid].visible = true
@@ -650,7 +741,6 @@ function vnlib.moveChar(cid, posx, posy)
 end
 
 function vnlib.distribChars(charar)
-	
 	local tchars = #charar
 	local l = 1 / (tchars +1)
 	local offset, gridline, charwidth, charscale = 0,0,0,0
@@ -660,12 +750,10 @@ function vnlib.distribChars(charar)
 		charwidth = vnlib.getCharWidth(v)
 		vnlib.moveChar(v,  offset + (gridline - (charwidth / 2)))
 	end
-	
 end
 
 
 function vnlib.eqScales()
-	
 	local tmp = {}
 	local minscale = 9999
 	local maxscale = 0
@@ -794,10 +882,7 @@ function vnlib.showDialogOnce(str, timeout)
 end
 
 function vnlib.addRep(k, v)
-	if uservars[v] then
-	else
 		reps[k] = v
-	end
 end
 
 function vnlib.toDialog()
@@ -814,6 +899,10 @@ function vnlib.getVal(varp)
 end
 
 function vnlib.assignVal(varp,value)
+	if not uservars[varp] then
+		-- table.insert(usereps, "_" .. varp)
+		usereps[varp] = "_" .. varp
+	end
 	uservars[varp] = value
 end
 
