@@ -1,8 +1,18 @@
 -- MAKING LIBRARY ACCESSIBLE
 
 vnlib = {}
+
+-- PLEASE NOTE THAT THIS IS AN
+-- EARLY TEST VERSION AND AS SUCH
+-- IT CONTAINS ALL SORTS OF ERRORS,
+-- BUGS AND BROKEN CODE.
+-- THE ONLY REASON THIS IS IN
+-- GITHUB IS BECAUSE I NEED TO
+-- ACCESS IT ON MORE THAN ONE
+-- DEVICE.
+
 vnlib.ver = 1
-vnlib.subver = 2
+vnlib.subver = 5
 
 
 -- LOCAL TABLES AND VARIABLES
@@ -21,7 +31,7 @@ local scr = {
 
 -- CONSTANTS (K)
 local ks = {
-	dims = { top = "width", right = "width", top = "height", bottom = "height" }
+	dims = { left = "width", right = "width", top = "height", bottom = "height" }
 }
 
 -- AREAS DEFINITION TABLES
@@ -37,10 +47,11 @@ local images = {}
 -- TABLE WITH MUST-HAVE AREAS AS KEY
 -- AND REFERENCES TO THE AREAS
 -- DEFINITION AS VALUE
-local targets = {
-	stage = "stage",
-	dialog = "dlgarea"
-}
+local targets = {}
+
+-- ARRAY WITH REVERSE DRAWING
+-- ORDER OF TARGETTED AREAS
+local draword = {}
 
 -- TABLE WITH EVERY CURRENTLY LOADED
 -- DIALOG LINE
@@ -118,6 +129,10 @@ local touch = {}
 -- WITH USER-DEFINED VARS
 local compareTo = {}
 
+-- CONTAINER FOR AREA FOREGROUND
+-- DRAWING FUNCTIONS
+local drawfg = {}
+
 -- Returns true for strings that end in a
 -- % sign
 local function isper(val)
@@ -141,6 +156,19 @@ function drawbg.image(adef)
 	love.graphics.setColor(1,1,1,1)
 	love.graphics.draw(images[adef.background.image].image, adef.geometry.left, adef.geometry.top, 0, adef.background.scalex, adef.background.scaley)
 end
+
+function drawfg.color(fgdef)
+	
+	love.graphics.setColor(fgdef.fcolor[1], fgdef.fcolor[2], fgdef.fcolor[3])
+	for k, v in pairs(fgdef.lines) do
+		love.graphics.rectangle("fill", v[1], v[2], v[3], v[4])
+	end
+	love.graphics.setColor(fgdef.bcolor[1], fgdef.bcolor[2], fgdef.fcolor[3])
+	for k, v in pairs(fgdef.squares) do
+		love.graphics.rectangle("line", v[1], v[2], v[3], v[4])
+	end
+end
+		
 
 -- Draws the active image of a character
 local function drawChar(cdef)
@@ -166,7 +194,9 @@ local function readconf(dir)
 			b = tonumber(string.sub(v, g2b+1, #v))
 			v = { r, g, b }
 		end
-		config[k] = v
+		if v ~= "" then
+			config[k] = v
+		end
 	end
 end
 
@@ -185,20 +215,20 @@ end
 -- dialog area
 function drawDialog.dialog(ddef)
 	love.graphics.setColor(chars[ddef.char].color[1] or config.def_font_color[1], chars[ddef.char].color[2] or config.def_font_color[2], chars[ddef.char].color[3] or config.def_font_color[3])
-	love.graphics .print(rtRep(ddef.line), fonts.dialog, areas[targets.dialog].geometry.left+5, areas[targets.dialog].geometry.top+5)
+	love.graphics .print(rtRep(ddef.line), fonts.dialog, areas[targets.dialog].sgeometry.left+5, areas[targets.dialog].sgeometry.top+5)
 end
 
 -- Draws a choice type dialog
 function drawDialog.choice(ddef)
 	love.graphics.setColor(config.def_font_color[1], config.def_font_color[2], config.def_font_color[3])
-	love.graphics.print(rtRep(ddef.caption), fonts.choice, areas[targets.dialog].geometry.left+5, areas[targets.dialog].geometry.top+5)
+	love.graphics.print(rtRep(ddef.caption), fonts.choice, areas[targets.dialog].sgeometry.left+5, areas[targets.dialog].sgeometry.top+5)
 	for i, v in ipairs(ddef.choices) do
-		love.graphics.line(areas[targets.dialog].geometry.left, v.top, areas[targets.dialog].geometry.right, v.top)
+		love.graphics.line(areas[targets.dialog].sgeometry.left, v.top, areas[targets.dialog].sgeometry.right, v.top)
 		if evalCond(v.cond) then
 			love.graphics.print(rtRep(v.choice), fonts.choice, v.left, v.top)
 		end
 	end
-	love.graphics.line(areas[targets.dialog].geometry.left, ddef.lastline, areas[targets.dialog].geometry.right, ddef.lastline)
+	love.graphics.line(areas[targets.dialog].sgeometry.left, ddef.lastline, areas[targets.dialog].sgeometry.right, ddef.lastline)
 end
 
 -- Just closes the game
@@ -210,8 +240,17 @@ end
 -- dialog
 function drawDialog.interact()
 	love.graphics.setColor(config.def_font_color[1], config.def_font_color[2], config.def_font_color[3])
-	love.graphics.print(rtRep(dialogs[dialog_index].line), fonts.dialog, areas[targets.dialog].geometry.left+5, areas[targets.dialog].geometry.top+5)
+	love.graphics.print(rtRep(dialogs[dialog_index].line), fonts.interaction, areas[targets.dialog].sgeometry.left+5, areas[targets.dialog].sgeometry.top+5)
 end
+
+
+-- Draws characters' names in the
+-- name area (if it exists)
+function drawName()
+	love.graphics.setColor(chars[dialogs[dialog_index].char].color[1], chars[dialogs[dialog_index].char].color[2], chars[dialogs[dialog_index].char].color[3])
+	love.graphics.print(chars[dialogs[dialog_index].char].name, fonts.name, areas[targets.name].sgeometry.left+5, areas[targets.name].sgeometry.top+5)
+end
+
 
 -- Takes a condition definition and
 -- passes it to the apropriate function
@@ -223,6 +262,7 @@ function evalCond(condef)
 		return compareTo[condef.type](condef.var, condef.val)
 	end
 end
+
 
 -- returns true if uservars.[var] is equal
 -- to [val], false otherwise
@@ -271,23 +311,23 @@ function recalcScales(scale)
 		for k, v in pairs(chars) do
 			for i, w in ipairs(v.images) do
 				w.scale = scale
-				w.left = areas[targets.stage].geometry.centerx - ((images[w.image].width * scale) / 2)
-				w.top = areas[targets.stage].geometry.top + (areas[targets.stage].geometry.height - w.height)
+				w.left = areas[targets.stage].sgeometry.centerx - ((images[w.image].width * scale) / 2)
+				w.top = areas[targets.stage].sgeometry.top + (areas[targets.stage].sgeometry.height - w.height)
 			end
 		end
 	elseif type(scale) == "string" then
 		if scale == "max" then
 			for k, v in pairs(chars) do
 				for i, w in ipairs(v.images) do
-					wrat = images[w.image].width / areas[targets.stage].geometry.width
-					hrat = images[w.image].height / areas[targets.stage].geometry.height
+					wrat = images[w.image].width / areas[targets.stage].sgeometry.width
+					hrat = images[w.image].height / areas[targets.stage].sgeometry.height
 					if (wrat > 1) or (hrat > 1) then
 						w.scale = 1 / math.max(wrat, hrat)
 					else
 						w.scale = 1 / math.max(wrat, hrat)
 					end
-					w.left = areas[targets.stage].geometry.centerx - ((images[w.image].width * w.scale) / 2)
-					w.top = areas[targets.stage].geometry.top + (areas[targets.stage].geometry.height - (images[w.image].height * w.scale))
+					w.left = areas[targets.stage].sgeometry.centerx - ((images[w.image].width * w.scale) / 2)
+					w.top = areas[targets.stage].sgeometry.top + (areas[targets.stage].sgeometry.height - (images[w.image].height * w.scale))
 				end
 			end
 		elseif scale == "eqmax" then
@@ -298,15 +338,14 @@ function recalcScales(scale)
 					if images[w.image].height > tallest then tallest = images[w.image].height end
 				end
 			end
-			lscale = math.min(areas[targets.stage].geometry.width / widest, areas[targets.stage].geometry.height / tallest)
-			if lscale > 1 then
-				lscale = 1/lscale
-			end
+			wrat = areas[targets.stage].sgeometry.width / widest
+			hrat = areas[targets.stage].sgeometry.height / tallest
+			lscale = math.min(wrat, hrat)
 			for k,v in pairs(chars) do
 				for i, w in ipairs(v.images) do
 					w.scale = lscale
-					w.left = areas[targets.stage].geometry.centerx - ((images[w.image].width * w.scale) / 2)
-					w.top = areas[targets.stage].geometry.top + (areas[targets.stage].geometry.height - (images[w.image].height * w.scale))
+					w.left = areas[targets.stage].sgeometry.centerx - ((images[w.image].width * w.scale) / 2)
+					w.top = areas[targets.stage].sgeometry.top + (areas[targets.stage].sgeometry.height - (images[w.image].height * w.scale))
 				end
 			end
 		end
@@ -376,27 +415,37 @@ local function getDialog(file)
 	local tfound = false
 	local nuopt, nuact, cond = {}, {}, {}
 	local predlg = require(config.basedir .. file)
+	-- for all lines run reps and adjust
+	-- line to area
 	for i, v  in ipairs(predlg) do
 		if v.line then
 			for k, w in pairs(reps) do
 				v.line = string.gsub(v.line, k,w)
 			end
-			if fonts.dialog:getWidth(v.line) >= areas[targets.dialog].geometry.width then
-				v.line = adjustLine(v.line, areas[targets.dialog].geometry.width, "dialog")
+			if fonts.dialog:getWidth(v.line) >= areas[targets.dialog].sgeometry.width then
+				v.line = adjustLine(v.line, areas[targets.dialog].sgeometry.width, "dialog")
+			end
+		elseif v.caption then
+			for k, w in pairs(reps) do
+				v.caption = string.gsub(v.caption, k,w)
+			end
+			if fonts.dialog:getWidth(v.caption) >= areas[targets.dialog].sgeometry.width then
+				v.caption = adjustcaption(v.caption, areas[targets.dialog].sgeometry.width, "dialog")
 			end
 		end
+		-- FOR CHOICE DIALOGS
 		if v.char == "choice" then
 			topts = #v.opt
 			for _, w in ipairs(v.opt) do
-				theight = theight + fonts.dialog:getHeight(w.choice)
+				theight = theight + fonts.choice:getHeight(w.choice)
 			end
 			acumh =  fonts.choice:getHeight(v.line) + 5
 			for i, w in ipairs(v.opt) do
 				for k, vvv in pairs(reps) do
 					w.choice = string.gsub(w.choice, k,vvv)
 				end
-				if fonts.dialog:getWidth(w.choice) >= areas[targets.dialog].geometry.width then
-					w.choice = adjustLine(w.choice, areas[targets.dialog].geometry.width, "dialog")
+				if fonts.choice:getWidth(w.choice) >= areas[targets.dialog].sgeometry.width then
+					w.choice = adjustLine(w.choice, areas[targets.dialog].sgeometry.width, "choice")
 				end
 				if w.cond then
 					cond = {
@@ -411,10 +460,10 @@ local function getDialog(file)
 					cond = cond,
 					choice = w.choice,
 					next = w.next,
-					top = areas[targets.dialog].geometry.top + acumh + 5,
-					left = areas[targets.dialog].geometry.left+5,
-					bottom = areas[targets.dialog].geometry.top + acumh + fonts.choice:getHeight(w.choice) + 5,
-					right = areas[targets.dialog].geometry.right
+					top = areas[targets.dialog].sgeometry.top + acumh + 10,
+					left = areas[targets.dialog].sgeometry.left+5,
+					bottom = areas[targets.dialog].sgeometry.top + acumh + fonts.choice:getHeight(w.choice) + 5,
+					right = areas[targets.dialog].sgeometry.right
 				}
 				acumh = acumh + fonts.choice:getHeight(w.choice) + 10
 			end
@@ -422,8 +471,10 @@ local function getDialog(file)
 				type = "choice",
 				caption = v.line,
 				choices = nuopt,
-				lastline = areas[targets.dialog].geometry.top + acumh+5
+				lastline = areas[targets.dialog].geometry.top + acumh + fonts.choice:getHeight(v.opt[opts]) + 5
+				-- lastline = areas[targets.dialog].geometry.top + acumh+5
 			}
+		-- FOR INTERACT DIALOG
 		elseif v.char == "interact" then
 			for j, w in ipairs(v.actions) do
 				if type(w.whentouch) == "string" then
@@ -447,10 +498,12 @@ local function getDialog(file)
 				actions = nuact,
 				line = v.line
 			}
+		-- FOR IN-DIALOG QUIT REQUEST
 		elseif v.char == "quit" then
 			dialogs[i] = {
 				type = "quit"
 			}
+		--;FOR NORMAL DIALOG
 		else
 			dialogs[i] = {
 				type = "dialog",
@@ -482,12 +535,12 @@ local function updateDialog()
 			end
 		end
 		if v.line then
-			if fonts.dialog:getWidth(v.line) >= areas[targets.dialog].geometry.width then
-				v.line = adjustLine(v.line, areas[targets.dialog].geometry.width, "dialog")
+			if fonts.dialog:getWidth(v.line) >= areas[targets.dialog].sgeometry.width then
+				v.line = adjustLine(v.line, areas[targets.dialog].sgeometry.width, "dialog")
 			end
 		else
-			if fonts.dialog:getWidth(v.caption) >= areas[targets.dialog].geometry.width then
-				v.caption = adjustLine(v.caption, areas[targets.dialog].geometry.width, "dialog")
+			if fonts.dialog:getWidth(v.caption) >= areas[targets.dialog].sgeometry.width then
+				v.caption = adjustLine(v.caption, areas[targets.dialog].sgeometry.width, "dialog")
 			end
 		end
 	end
@@ -566,12 +619,111 @@ end
 -- Caches the fonts specified in .conf
 -- file
 function getDefaultFonts()
+	-- Vars init
 	local lines = 7
-	if (not config.dlg_font_size) or (config.dlg_font_size = "") then
-		
-	vnlib.addFont("dialog", tonumber(config.dlg_font_size), config.basedir .. config.dlg_font)
+	local tf = ""
+	local th = 40
+	local ts = "Los hermanos sean unidos"
+	-- Set font size or calculate default
+	if (not config.dlg_font_size) or (config.dlg_font_size == "") or (config.dlg_font_size == "auto") then
+		while not found do
+			tf = love.graphics.newFont(config.basedir .. config.dlg_font, th)
+			if tf:getHeight(ts) * lines >= areas[targets.dialog].sgeometry.height - 10 then
+				while not found do
+					th = th - 1
+					tf = love.graphics.newFont(config.basedir .. config.dlg_font, th)
+					if tf:getHeight(ts) * lines < areas[targets.dialog].sgeometry.height - 10 then
+						found = true
+						config.dlg_font_size = th
+					end
+				end
+			else
+				th = th + 10
+			end
+		end
+	else
+		th = tonumber(config.dlg_font_size)
+	end
+	-- Get dialog font
+	vnlib.addFont("dialog", th, config.basedir .. config.dlg_font)
+	-- Reinit vars
+	lines = 6
+	th = 60
+	found = false
+	-- Set choice font size or calculate default
+	if (not config.choice_font_size) or (config.choice_font_size == "") or (config.choice_font_size == "auto") then
+		while not found do
+			tf = love.graphics.newFont(config.basedir .. config.choice_font, th)
+			if tf:getHeight(ts) * lines >= areas[targets.dialog].sgeometry.height - 10 then
+				while not found do
+					th = th - 1
+					tf = love.graphics.newFont(config.basedir .. config.choice_font, th)
+					if tf:getHeight(ts) * lines < areas[targets.dialog].sgeometry.height -10 then
+						found = true
+						config.choice_font_size = th
+					end
+				end
+			else
+				th = th + 10
+			end
+		end
+	else
+		th = tonumber(config.choice_font_size)
+	end
+	-- Get choice font
 	vnlib.addFont("choice", tonumber(config.choice_font_size), config.basedir .. config.choice_font)
-	vnlib.addFont("charname", tonumber(config.name_font_size), config.basedir .. config.name_font)
+	-- Reinit font
+	lines = 5
+	th = 60
+	found = false
+	-- Set interaction font size or calculate default
+	if (not config.int_font_size) or (config.int_font_size == "") or (config.int_font_size == "auto") then
+		while not found do
+			tf = love.graphics.newFont(config.basedir .. config.int_font, th)
+			if tf:getHeight(ts) * lines >= areas[targets.dialog].sgeometry.height - 10 then
+				while not found do
+					th = th - 1
+					tf = love.graphics.newFont(config.basedir .. config.int_font, th)
+					if tf:getHeight(ts) * lines < areas[targets.dialog].sgeometry.height - 10  then
+						found = true
+						config.int_font_size = th
+					end
+				end
+			else
+				th = th + 10
+			end
+		end
+	else
+		th = tonumber(config.int_font_size)
+	end
+	-- Get interaction font
+	vnlib.addFont("interaction", th, config.basedir .. config.int_font)
+	-- Reinit vars
+	found = false
+	lines = 1
+	th = 60
+	-- Set name font size or calculate default
+	if (not config.name_font_size) or (config.name_font_size == "") or (config.name_font_size == "auto") then
+		while not found do
+			tf = love.graphics.newFont(config.basedir .. config.name_font, th)
+			if tf:getHeight(ts) * lines >= areas[targets.name].sgeometry.height - 10 then
+				while not found do
+					th = th - 1
+					tf = love.graphics.newFont(config.basedir .. config.name_font, th)
+					if tf:getHeight(ts) * lines < areas[targets.name].sgeometry.height - 10 then
+						found = true
+						config.name_font_size = th
+					end
+				end
+			else
+				th = th + 10
+			end
+		end
+	else
+		th = tonumber(config.name_font_size)
+	end
+	-- Set name font
+	vnlib.addFont("name", tonumber(config.name_font_size), config.basedir .. config.name_font)
 end
 
 
@@ -587,10 +739,15 @@ function vnlib.init(width, height, confdir)
 	-- read config file
 	readconf(confdir)
 	-- cache images
-	cacheimages(config.basedir .. config.resdir)
+	cacheimages((config.basedir or "") .. (config.resdir or ""))
 	-- run start code
 	local fullpath = love.filesystem.getSource() .. config.basedir
 	dofile(fullpath .. "start.lua")
+	-- sort layers
+	if targets.dialog then table.insert(draword, "dialog") end
+	if targets.stage then table.insert(draword, "stage") end
+	if targets.name then table.insert(draword, "name") end
+	if targets.portrait then table.insert(draword, "portrait") end
 	-- get and store fonts for dialogs, choices and char names
 	getDefaultFonts()
 	-- load uaer actions
@@ -602,20 +759,97 @@ end
 
 
 function vnlib.draw()
-	-- draw backgrounds
-	for _, v in pairs(areas) do
-		if v.background then
-			drawbg[v.background.type](v)
+	if targets.stage then
+		drawbg[areas[targets.stage].background.type](areas[targets.stage])
+		for _,v in pairs(chars) do
+			if v.visible then
+				drawChar(v)
+			end
 		end
+		drawfg[areas[targets.stage].foreground.type](areas[targets.stage].foreground)
 	end
-	-- draw chars
-	for _,v in pairs(chars) do
-		if v.visible then
-			drawChar(v)
+	if targets.dialog then
+		drawbg[areas[targets.dialog].background.type](areas[targets.dialog])
+		drawDialog[dialogs[dialog_index].type](dialogs[dialog_index])
+		drawfg[areas[targets.dialog].foreground.type](areas[targets.dialog].foreground)
+	end
+	if targets.name then
+		drawbg[areas[targets.name].background.type](areas[targets.name])
+		if dialogs[dialog_index].char then
+			drawName()
 		end
+		drawfg[areas[targets.name].foreground.type](areas[targets.name].foreground)
 	end
-	-- draw dialog (or choices (or caption))
-	drawDialog[dialogs[dialog_index].type](dialogs[dialog_index])
+	if targets.portrait then
+		drawbg[areas[targets.portrait].background.type](areas[targets.portrait].background)
+		drawfg[areas[targets.portrait].foreground.type](areas[targets.portrait].foreground)
+	end
+end
+
+function vnlib.srtDefaultLayout(nflag, pflag)
+	vnlib.addArea("stgarea", {
+		left = 0,
+		right = "100%",
+		top = 0,
+		bottom = "72.5%",
+		background = {
+			type = "color",
+			color = { 0.4, 0, 0 }
+		},
+		foreground = {
+			type = "color",
+			fill_color = { 0.25, 0, 0 },
+			border_color = { 1, 1, 1 },
+			thickness = "4%",
+			same_thickness = true,
+			draw_inner_border = true,
+			draw_outer_border = false
+		}
+	})
+	vnlib.makeTarget("stgarea", "stage")
+	local stl, stt, str, stb = vnlib.getAreaCoords("stage")
+	local stsl, stst, stsr, stsb = vnlib.getAreaSafeCoords("stage")
+	vnlib.addArea("dlgarea", {
+		left = 0,
+		right = "100%",
+		top = "77.5%",
+		bottom = "100%",
+		background = {
+			type = "color",
+			color = { 0.1, 0.1, 0.15 }
+		},
+		foreground = {
+			type = "color",
+			fill_color = { 0.25, 0, 0 },
+			border_color = { 1, 1, 1 },
+			thickness = stsl - stl,
+			same_thickness = true,
+			draw_inner_border = true,
+			draw_outer_border = false
+		}
+	})
+	vnlib.makeTarget("dlgarea", "dialog")
+	local dlsl, dlst, dlsr, dlsb = vnlib.getAreaSafeCoords("dialog")
+	vnlib.addArea("namarea", {
+		left = stsl,
+		top = stsb + 1,
+		right = stsr,
+		bottom = dlst - 1,
+		background = {
+			type = "color",
+			color = { 0.4, 0, 0 }
+		},
+		foreground = {
+			type = "color",
+			fill_color = { 0.25, 0, 0 },
+			border_color = { 1, 1, 1 },
+			thickness = stsl - stl,
+			same_thickness = true,
+			draw_inner_border = true,
+			draw_outer_border = false
+		}
+	})
+	vnlib.makeTarget("namarea", "name")
 end
 
 
@@ -624,8 +858,8 @@ function vnlib.addChar(cid, cdef)
 	local aw, ah, tw, th, wdif, hdif = 0,0,0,0,0,0
 	local itbl, ptbl = {}, {}
 	-- calculate character images scale based on image size and target area size
-	tw = areas[targets.stage].geometry.width
-	th = areas[targets.stage].geometry.height
+	tw = areas[targets.stage].sgeometry.width
+	th = areas[targets.stage].sgeometry.height
 	for i, v in ipairs(cdef.images) do
 		aw = images[v].width
 		ah = images[v].height
@@ -642,8 +876,8 @@ function vnlib.addChar(cid, cdef)
 		itbl[i] = {
 			image = v,
 			scale = scale,
-			top = areas[targets.stage].geometry.top + (areas[targets.stage].geometry.height - (ah * scale)),
-			left = areas[targets.stage].geometry.centerx - ((aw * scale) / 2)
+			top = areas[targets.stage].sgeometry.top + (areas[targets.stage].geometry.height - (ah * scale)),
+			left = areas[targets.stage].sgeometry.centerx - ((aw * scale) / 2)
 		}
 	end
 		-- calculate portrait's scale based on it's size amd target area size, but only if a target area exists
@@ -773,8 +1007,8 @@ function vnlib.eqScales()
 			if images[v].width > widest then widest = images[v].width end
 			if images[v].height > tallest then tallest = images[v].height end
 		end
-		wratio = widest / areas[targets.stage].geometry.width
-		hratio = tallest / areas[targets.stage].geometry.height
+		wratio = widest / areas[targets.stage].sgeometry.width
+		hratio = tallest / areas[targets.stage].sgeometry.height
 		recalcScales(math.min(1/wratio, 1/hratio))
 	end
 end
@@ -796,6 +1030,10 @@ function vnlib.addArea(aname, adef)
 		top = 0,
 		bottom = 0
 	}
+	local vlt, hlt = 0,0
+	local sg = {}
+	local isq, osq = nil, nil
+	local fgt = nil
 	for k, _ in pairs(dims) do
 		if isper(adef[k]) then
 			dims[k] = scr[ks.dims[k]] * (tonumber(adef[k]:sub(1,#adef[k]-1)) / 100)
@@ -803,6 +1041,10 @@ function vnlib.addArea(aname, adef)
 			dims[k] = adef[k]
 		end
 	end
+	dims.width = dims.right - dims.left
+	dims.height = dims.bottom - dims.top
+	dims.centerx = dims.left + (dims.width / 2)
+	dims.centery = dims.top + (dims.height / 2)
 	if adef.background.type == "color" then
 		bgt = {
 			type = "color",
@@ -824,30 +1066,139 @@ function vnlib.addArea(aname, adef)
 			scaley = 1
 		}
 	end
+	if adef.foreground and (adef.foreground.type == "color") then
+		if isper(adef.foreground.thickness) then
+			if adef.foreground.same_thickness then
+				vlt = ((dims.width * (tonumber(adef.foreground.thickness:sub(1,#adef.foreground.thickness-1)) / 100) + dims.height * (tonumber(adef.foreground.thickness:sub(1,#adef.foreground.thickness-1)) / 100)) / 2)
+				hlt = vlt
+			else
+				vlt = dims.width * (tonumber(adef.foreground.thickness:sub(1,#adef.foreground.thickness-1)) / 100)
+				hlt = dims.height * (tonumber(adef.foreground.thickness:sub(1,#adef.foreground.thickness-1)) / 100)
+			end
+		else
+			vlt = adef.foreground.thickness
+			hlt = adef.foreground.thickness
+		end
+		if adef.foreground.draw_inner_border then
+			isq = {
+					dims.left + vlt,
+					dims.top + hlt,
+					dims.width - (vlt * 2),
+					dims.height - (hlt * 2)
+				}
+		end
+		if adef.foreground.draw_outer_border then
+			osq = {
+					dims.left,
+					dims.top,
+					dims.width,
+					dims.height
+				}
+		end
+		fgt = {
+			type = "color",
+			bcolor = adef.foreground.border_color,
+			fcolor = adef.foreground.fill_color,
+			lines = {
+				left = {
+					dims.left,
+					dims.top,
+					vlt,
+					dims.height - hlt
+				},
+				top = {
+					dims.left + vlt,
+					dims.top,
+					dims.width - vlt,
+					hlt
+				},
+				right = {
+					dims.right - vlt,
+					dims.top + hlt,
+					vlt,
+					dims.height - hlt
+				},
+				bottom = {
+					dims.left,
+					dims.bottom - hlt,
+					dims.width -vlt,
+					hlt
+				}
+			},
+			squares = {
+				inner = isq,
+				outter = osq
+			}
+		}
+		sg = {
+			left = dims.left + vlt,
+			top = dims.top + hlt,
+			right = dims.right - vlt,
+			bottom = dims.bottom - hlt,
+			width = (dims.right - vlt) - (dims.left + vlt),
+			height = (dims.bottom - hlt) - (dims.top + hlt),
+			centerx = (dims.left + vlt) + (((dims.right - vlt) - (dims.left + vlt)) / 2),
+			centery = (dims.top + hlt) + (((dims.bottom - hlt) - (dims.top + hlt)) / 2)
+		}
+	elseif not adef.foreground then
+		sg = dims
+	end
 	if adef.type then
 		targets[type] = aname
 	end
 	areas[aname] = {
-		geometry = {
-			left = dims.left,
-			right = dims.right,
-			top = dims.top,
-			bottom = dims.bottom, 
-			centerx = dims.left + ((dims.right - dims.left) / 2),
-			centery = dims.top + (( dims.bottom - dims.top) / 2),
-			width = dims.right - dims.left,
-			height = dims.bottom - dims.top
-		},
+		geometry = dims,
+		sgeometry = sg,
 		background = bgt,
-		foreground = adef.foreground
+		foreground = fgt
 	}
 end
+
+
+function vnlib.getAreaCoords(aname)
+	if areas[aname] then
+		return areas[aname].geometry.left, areas[aname].geometry.top, areas[aname].geometry.right, areas[aname].geometry.bottom
+	elseif areas[targets[aname]] then
+		return areas[targets[aname]].geometry.left, areas[targets[aname]].geometry.top, areas[targets[aname]].geometry.right, areas[targets[aname]].geometry.bottom
+	else
+		return 0, 0, 0, 0
+	end
+end
+
+
+function vnlib.getAreaSafeCoords(aname)
+	if areas[aname] then
+		return areas[aname].sgeometry.left, areas[aname].sgeometry.top, areas[aname].sgeometry.right, areas[aname].sgeometry.bottom
+	elseif areas[targets[aname]] then
+		return areas[targets[aname]].sgeometry.left, areas[targets[aname]].sgeometry.top, areas[targets[aname]].sgeometry.right, areas[targets[aname]].sgeometry.bottom
+	else
+		return 0, 0, 0, 0
+	end
+end
+
 
 function vnlib.getAreaSize(aname, axis)
 	if axis then
 		return areas[aname].geometry[axis]
 	else
 		return areas[aname].geometry.width, areas[aname].geometry.height
+	end
+end
+
+
+function vnlib.getSafeAreaSize(aname, axis)
+	if axis then
+		return areas[aname].sgeometry[axis]
+	else
+		return areas[aname].sgeometry.width, areas[aname].sgeometry.height
+	end
+end
+
+function vnlib.getSafeAreaCenter(aname, axis)
+	if axis then
+		return areas[aname].sgeometry["center" .. axis]
+	else
+		return areas[aname].sgeometry.centerx, areas[aname].sgeometry.centery
 	end
 end
 
@@ -900,7 +1251,6 @@ end
 
 function vnlib.assignVal(varp,value)
 	if not uservars[varp] then
-		-- table.insert(usereps, "_" .. varp)
 		usereps[varp] = "_" .. varp
 	end
 	uservars[varp] = value
