@@ -1,1277 +1,1773 @@
--- MAKING LIBRARY ACCESSIBLE
+vnl = {}
 
-vnlib = {}
-
--- PLEASE NOTE THAT THIS IS AN
--- EARLY TEST VERSION AND AS SUCH
--- IT CONTAINS ALL SORTS OF ERRORS,
--- BUGS AND BROKEN CODE.
--- THE ONLY REASON THIS IS IN
--- GITHUB IS BECAUSE I NEED TO
--- ACCESS IT ON MORE THAN ONE
--- DEVICE.
-
-vnlib.ver = 1
-vnlib.subver = 5
-
-
--- LOCAL TABLES AND VARIABLES
-
--- VALUES IN VNLIB.CONF
-local config = {}
-
--- SCREEN SIZE AND CENTER POSITIONS
--- VALUES USED WHEN ADDING AN AREA
-local scr = {
-	width = 0,
-	height = 0,
-	centerx = 0,
-	centery = 0
-}
-
--- CONSTANTS (K)
-local ks = {
-	dims = { left = "width", right = "width", top = "height", bottom = "height" }
-}
-
--- AREAS DEFINITION TABLES
+local imanip = require("vnlite/imanip")
+local screen = {}
+local comres = {}
 local areas = {}
-
--- CHARACTERS DEFINITION TABLE
 local chars = {}
-
--- TABLE WITH CACHED IMAGES AND SOME
--- DATA ABOUT THEM
-local images = {}
-
--- TABLE WITH MUST-HAVE AREAS AS KEY
--- AND REFERENCES TO THE AREAS
--- DEFINITION AS VALUE
-local targets = {}
-
--- ARRAY WITH REVERSE DRAWING
--- ORDER OF TARGETTED AREAS
-local draword = {}
-
--- TABLE WITH EVERY CURRENTLY LOADED
--- DIALOG LINE
-local dialogs = {}
-
--- POINTER TO CURRENT DIALOG LINE,
--- REGARDLESS OF TYPE
-local dialog_index = 0
-
--- TABLE  WITH STRINGS TO BE REPLACED
--- IN DIALOG LINES, CHOICE CAPTION
--- AND OPTIONS AND INTERACTION CAPTIONS
--- AND THE STRING TO REOLACE IT WITH
--- AS VALUE
--- a new replace is created automatically
--- upon character adding, with _[char id] as
--- key, and [character name as value.
+local props = {}
+local dialog = {}
 local reps = {}
-
--- Similar to reps, except it's indexed
--- and values are "_uservar". Replacement
--- is performed ijñnmediately prior to
--- render
-local usereps = {}
-
--- TABLE CONTAINING SOME MUST HAVE
--- FONTS. DIALOG, CHOICE AND CHARNAME
--- MORE CAN BE ADDED
 local fonts = {}
-
--- VERY IMPORTANT VAR THAT STATES
--- HOW PROGRAM FLOW IS CONTROLLED
---  VALUES ARE "dialog", "interact", and
--- "choice"
-local control = "dialog"
-
--- TABLE CONTAINING VARIABLES CREATED
--- AT RUNTIME, CAN BE ACCESED VIA
--- getVal AND assignVal FUNCTIONS
-local uservars = {}
-
--- TABLE CONTAINING FUNCTIONS DEFINED
--- AT RUNTIME, THEY ARE LOADED FROM
--- acrions.lua
 local useractions = {}
+local uservars = {}
+local visiblechars = {}
+local visibleprops = {
+	front = {},
+	back = {}
+}
+local basedir = ""
+local comdir = ""
+local charsdir = ""
+local propsdir = ""
+local dialogsdir = ""
+local dindex = 1
+local dcontrol = ""
+local prepro = false
+local procdiag = {}
 
 
 
--- LOCAL FUNCTIONS
+local function getNum(per)
+	local super = tonumber(per:sub(1,-2))
+	return per / 100
+end
 
--- CONTAINER FOR THE VARIOUS AREA
--- BACKGROUND DRAWING FUNCTIOBS
-local drawbg = {}
+local function areageometry(adef)
+	
+	local geom = {
+		left = screen.geometry.right * adef.left,
+		top = screen.geometry.bottom * adef.top,
+		right = screen.geometry.right * adef.right,
+		bottom = screen.geometry.bottom * adef.bottom
+	}
+	geom.width = geom.right - geom.left
+	geom.height = geom.bottom - geom.top
+	geom.centerx = geom.left + (geom.width / 2)
+	geom.centery = geom.top + (geom.height / 2)
+	return geom
+end
 
--- CONTAINER FOR DIALOG DRAWING
--- FUNCTIONS
-local drawDialog = {}
+local function colorbg(bgdef)
+	return bgdef
+end
 
--- CONTAINER FOR COORDINATE CHECKING
--- FUNCTIONS
-local checkCoord = {}
+local function imagebg(bgdef, geom)
+	local xscale = geom.width / comres[bgdef.image].width
+	local yscale = geom.height / comres[bgdef.image].height
+	-- create background subtable
+	return {
+		type = "image",
+		image = bgdef.image,
+		xscale = xscale,
+		yscale = yscale
+	}
+end
 
--- CONTAINER FOR TOUCH EVALUATION
--- FUNCTIONS.
--- THOUGH THE NAME SUGGESTS IT
--- WORKS WITH TOUCHSCREEN DEVICES
--- ONLY, THE MAIN vnlib.evalTouch() IS
--- MEANT TO RECEIVE COORDINATES
--- REGARDLESS OF WHAT CAUSES THEM
--- THIS ALSO MEANS THE USER MUST
--- PUT A CALL TO IT IN IT'S main.lua
-local touch = {}
+function tilebg(bgdef, geom)
+	
+	local tid = love.image.newImageData(basedir .. "common/" .. bgdef.image .. ".png")
+	tid = imanip.tile(tid, geom.width, geom.height)
+	local tname = bgdef.image .. "_t" .. geom.width .. "x" .. geom.height
+	comres[tname] = {
+		image = love.graphics.newImage(tid),
+		width = geom.width,
+		height = geom.height
+	}
+	return {
+		type = "image",
+		image = tname,
+		xscale = 1,
+		yscale = 1
+	}
+end
 
--- CONTAINER FOR COMPARING VALUES
--- WITH USER-DEFINED VARS
-local compareTo = {}
-
--- CONTAINER FOR AREA FOREGROUND
--- DRAWING FUNCTIONS
-local drawfg = {}
-
--- Returns true for strings that end in a
--- % sign
-local function isper(val)
-	if (type(val) == "string") and (val:sub(#val,#val) == "%") then
-		return true
+function plainfg(fgdef, geom)
+	local verthickness, horthickness = 0, 0
+	local fg, sgeom = {}, {}
+	local sqind = 0
+	if fgdef.thickness then
+		verthickness = ((geom.width + geom.height) / 2) * fgdef.thickness
+		horthickness = ((geom.width + geom.height) / 2) * fgdef.thickness
 	else
-		return false
+		verthickness = geom.width * fgdef.vertical_thickness
+		horthickness = geom.height * fgdef.horizontal_thickness
+	end
+	fg = {
+		type = "plain",
+		fill = fgdef.fill_color,
+		border = fgdef.border_color,
+		squares = {
+			left = {
+				left = geom.left,
+				top = geom.top,
+				width = verthickness,
+				height = geom.height - horthickness
+			},
+			top = {
+				left = geom.left + verthickness,
+				top = geom.top,
+				width = geom.width - verthickness,
+				height = horthickness
+			},
+			right = {
+				left = geom.right - verthickness,
+				top = geom.top + horthickness,
+				width = verthickness,
+				height = geom.height - horthickness
+			},
+			bottom = {
+				left = geom.left,
+				top = geom.bottom - horthickness,
+				width = geom.width - verthickness,
+				height = horthickness
+			}
+		}
+	}
+	fg.lines = {}
+	if (fgdef.border == "inner") or (fgdef.border == "both") then
+		fg.lines[1] = {
+			left = geom.left + verthickness,
+			top = geom.top + horthickness,
+			width = geom.width - (verthickness * 2),
+			height = geom.height - (horthickness * 2)
+		}
+	end
+	if (fgdef.border == "outer") or (fgdef.border == "both") then
+		if #fg.lines == 1 then
+			sqind = 2
+		else
+			sqind = 1
+		end
+		fg.lines[sqind] = {
+			left = geom.left,
+			top = geom.top,
+			width = geom.width,
+			height = geom.height
+		}
+	end
+	sgeom = {
+		left = geom.left + verthickness,
+		top = geom.top + horthickness,
+		right = geom.right - verthickness,
+		bottom = geom.bottom - horthickness,
+		width = geom.width - (verthickness * 2),
+		height = geom.height - (horthickness * 2),
+	}
+	return fg, sgeom
+end
+
+local function getFrameLineData(il)
+	-- lotsa tables
+	local lids = {
+		left = "",
+		top = "",
+		right = "",
+		bottom = ""
+	}
+	local opo = {
+		left = "right",
+		top = "bottom",
+		right = "left",
+		bottom = "top"
+	}
+	local rots = {
+		left = { "top", "bottom" },
+		top = { "left", "right" },
+		right = { "bottom", "top" },
+		bottom = { "right", "left" }
+	}
+	-- init vars
+	local htr = ""
+	local oplace = ""
+	local nuplace = ""
+	--:get available image files and turn
+	-- them to imagedatas
+	for place, _ in pairs(lids) do
+		if il[place] then
+			lids[place] = love.image.newImageData(comdir .. il[place] .. ".png")
+		end
+	end
+	-- fill the missing imagedatas by 
+	-- rotating available images
+	for place, _ in pairs(lids) do
+		-- when an image dara is missing
+		if not il[place] then
+			-- always prefer to rotate 180°
+			if il[opo[place]] then
+				oplace = opo[place]
+				nuplace = place
+				htr = imanip.figureFrameRot(oplace, nuplace)
+				lids[place] = imanip[htr](lids[oplace])
+			else
+				-- if no 180° image available find one
+				-- to rotate 90° or 270°
+				if il[rots[place][1]] then
+					oplace = rots[place][1]
+					nuplace = place
+					htr = imanip.figureFrameRot(oplace, nuplace)
+					lids[place] = imanip[htr](lids[oplace])
+				else -- il[rots[place][2]] == true is implied
+					oplace = rots[place][2]
+					nuplace = place
+					htr = imanip.figureFrameRot(oplace, nuplace)
+					lids[place] = imanip[htr](lids[oplace])
+				end
+			end
+		end
+	end
+	return lids
+end
+
+local function getTiledLines(lids, geom)
+	local vt = lids.right:getWidth()
+	local ht = lids.top:getHeight()
+	local nulids = {
+		left = imanip.tile(lids.left, vt, geom.height - (ht * 2)),
+		top = imanip.tile(lids.top, geom.width - (vt * 2), ht),
+		right = imanip.tile(lids.right, vt, geom.height - (ht * 2)),
+		bottom = imanip.tile(lids.bottom,  geom.width - (vt * 2), ht)
+	}
+	return nulids, vt, ht
+end
+
+local function getFrameCornerData(il)
+	local cids = {
+		top_left = "",
+		top_right = "",
+		bottom_right = "",
+		bottom_left = ""
+	}
+	local avaicid = ""
+	-- turn available irefs to imagedatas
+	for place, _ in pairs(cids) do
+		if il[place] then
+			cids[place] = love.image.newImageData(comdir .. il[place] .. ".png")
+			avaicid = place
+		end
+	end
+	-- fill missing imagedatas by rotating
+	-- available ones
+	for place, iref in pairs(cids) do
+		if not il[place] then
+			htr = imanip.figureFrameRot(avaicid, place)
+			cids[place] = imanip[htr](cids[avaicid])
+		end
+	end
+	cs = cids[avaicid]:getHeight()
+	return cids, cs
+end
+
+local function composeFrame(lids, cids, geom, vt, ht, cs)
+	-- lotsa tables, revisited
+	local loff = {
+		left = {
+			left = 0,
+			top = ht
+		},
+		top = {
+			left = vt,
+			top = 0
+		},
+		right = {
+			left = geom.width - vt,
+			top = ht
+		},
+		bottom = {
+			left = vt,
+			top = geom.height - ht
+		}
+	}
+	
+	local coff = {
+		top_left = {
+			left = 0,
+			top = 0
+		},
+		top_right = {
+			left = geom.width - cs,
+			top = 0
+		},
+		bottom_right = {
+			left = geom.width - cs,
+			top = geom.height - cs
+		},
+		bottom_left = {
+			left = 0,
+			top = geom.height - cs
+		},
+	}
+	-- init vars (and create frame image
+	-- data)
+	local ow, oh, lox, loy, r, g, b, a = 0, 0, 0, 0, 0, 0, 0, 0
+	local frame = love.image.newImageData(geom.width, geom.height)
+	-- put lines in frame
+	for place, idata in pairs(lids) do
+		ow, oh = idata:getDimensions()
+		lox = ow - 1
+		loy = oh - 1
+		for y = 0, loy do
+			for x = 0, lox do
+				r, g, b, a = idata:getPixel(x, y)
+				if a > 0 then
+					frame:setPixel(x + loff[place].left, y + loff[place].top, r, g, b, a)
+				end
+			end
+		end
+	end
+	-- put corners in frame
+	ow, oh = cids.top_left:getDimensions()
+	lox = ow - 1
+	loy = oh - 1
+	for place, idata in pairs(cids) do
+		for y = 0, lox do
+			for x = 0, loy do
+				r, g, b, a = idata:getPixel(x, y)
+				if a > 0 then
+					frame:setPixel(x + coff[place].left, y + coff[place].top, r, g, b, a)
+				end
+			end
+		end
+	end
+	return frame
+end
+
+local function getFrameName()
+	local i = 1
+	local found = false
+	local name =""
+	while not found do
+		if not comres["frame" .. i] then
+			found = true
+			name = "frame" .. i
+		else
+			i = i + 1
+		end
+	end
+	return name
+end
+
+
+local function imageFG(fgdef, geom)
+	-- INICIAR VARIABLES
+	-- LINEAS
+	-- buscar idatas disponibles y crear
+	-- idatas faltantes
+	local lids = getFrameLineData(fgdef.images)
+	-- crear tiles
+	local lids, vth, hth = getTiledLines(lids, geom)
+	-- RINCONES
+	--buscar idatas disponibles y crear
+	-- faltantes
+	local cids, cs = getFrameCornerData(fgdef.images)
+	-- COMPOSICIÓN Y GENERACIÓN
+	-- componer imagen
+	local framedata = composeFrame(lids, cids, geom, vth, hth, cs)
+	-- convertir imagedata a imagen, 
+	-- generar nombre y poner en cache
+	local framename = getFrameName()
+	comres[framename] = {
+		image = love.graphics.newImage(framedata),
+		width = geom.width,
+		height = geom.height
+	}
+	-- generar fg
+	fg = {
+		type = "image",
+		image = framename,
+		xscale = 1,
+		yscale = 1
+	}
+	-- generar safe geom
+	sg = {
+		left = geom.left + vth,
+		top = geom.top + hth,
+		right = geom.right - vth,
+		bottom = geom.bottom - hth,
+		width = geom.width - (vth * 2),
+		height = geom.height - (hth * 2)
+	}
+	-- DEVOLVER
+	return fg, sg
+	
+end
+
+-- accepts either a file or a table
+local function getAreas(adef)
+	-- init vars
+	local bg, geom, fg, sgeom = {}, {}, {}
+	if type(adef) == "string" then
+		adef = require(basedir .. afile)
+	end
+	-- big fat iterator
+	for k, v in pairs(adef) do
+		-- get basic area geometry
+		geom = areageometry(v)
+		if v.background.type == "color" then
+			bg = colorbg(v.background)
+		elseif v.background.type == "image" then
+			bg = imagebg(v.background, geom)
+		elseif v.background.type == "tile" then
+			bg = tilebg(v.background, geom)
+		else
+			
+		end
+		if v.foreground then
+			if v.foreground.type == "plain" then
+				fg, sgeom = plainfg(v.foreground, geom)
+			elseif v.foreground.type == "frame" then
+				fg, sgeom = imageFG(v.foreground, geom)
+			else
+				fg = false
+				sgeom = geom
+			end
+		else
+			fg = false
+			sgeom = geom
+		end
+		
+		areas[k] = {
+			geometry = geom,
+			background = bg,
+			foreground = fg,
+			safe = sgeom
+		}
+		
 	end
 end
 
--- Draws the solid color background
--- of an area
+local drawfg = {}
+
+function drawfg.plain(adef)
+	local bgdef = adef.foreground
+	love.graphics.setColor(unpack(bgdef.fill))
+	for _, v in pairs(bgdef.squares) do
+		love.graphics.rectangle("fill", v.left, v.top, v.width, v.height)
+	end
+	if bgdef.border then
+		love.graphics.setColor(unpack(bgdef.border))
+		for _, v in ipairs(bgdef.lines) do
+			love.graphics.rectangle("line", v.left, v.top, v.width, v.height)
+		end
+	end
+end
+
+function drawfg.image(adef)
+	love.graphics.setColor(1, 1, 1)
+	love.graphics.draw(comres[adef.foreground.image].image, adef.geometry.left, adef.geometry.top, 0, xscale, yscale)
+end
+
+local drawbg = {}
+
 function drawbg.color(adef)
-	love.graphics.setColor(adef.background.color[1], adef.background.color[2], adef.background.color[3])
+	love.graphics.setColor(unpack(adef.background.color))
 	love.graphics.rectangle("fill", adef.geometry.left, adef.geometry.top, adef.geometry.width, adef.geometry.height)
 end
 
--- Draws the image background of an
--- area
 function drawbg.image(adef)
-	love.graphics.setColor(1,1,1,1)
-	love.graphics.draw(images[adef.background.image].image, adef.geometry.left, adef.geometry.top, 0, adef.background.scalex, adef.background.scaley)
+	love.graphics.setColor(1, 1, 1)
+	love.graphics.draw(comres[adef.background.image].image, adef.geometry.left, adef.geometry.top, 0, adef.background.xscale, adef.background.yscale)
 end
 
-function drawfg.color(fgdef)
-	
-	love.graphics.setColor(fgdef.fcolor[1], fgdef.fcolor[2], fgdef.fcolor[3])
-	for k, v in pairs(fgdef.lines) do
-		love.graphics.rectangle("fill", v[1], v[2], v[3], v[4])
-	end
-	love.graphics.setColor(fgdef.bcolor[1], fgdef.bcolor[2], fgdef.fcolor[3])
-	for k, v in pairs(fgdef.squares) do
-		love.graphics.rectangle("line", v[1], v[2], v[3], v[4])
-	end
-end
-		
-
--- Draws the active image of a character
 local function drawChar(cdef)
-	love.graphics.setColor(1,1,1,1)
-	love.graphics.draw(images[cdef.images[cdef.actimg].image].image, cdef.images[cdef.actimg].left, cdef.images[cdef.actimg].top, 0, cdef.images[cdef.actimg].scale)
+	love.graphics.setColor(1, 1, 1, cdef.active.alpha)
+	love.graphics.draw(cdef.images[cdef.active.ref].image, cdef.active.x, cdef.active.y, cdef.active.angle, cdef.active.scale)
 end
 
--- dumps the content of vnlib.conf to
--- the [config] table
-local function readconf(dir)
-	local r2g, g2b = 0
-	local r,g,b = 0,0,0
-	for line in love.filesystem.lines(dir .. "vnlib.conf") do
-		local sep = line:find("=")
-		local k = line:sub(1,sep-1)
-		local v = line:sub(sep+1,#line)
-		if k == "def_font_color" then
-			r2g = string.find(v, ",")
-			r = tonumber(string.sub(v, 0, r2g-1))
-			v = string.sub(v, 0, r2g+1)
-			g2b = string.find(v, ",")
-			g = tonumber(string.sub(v, 0, g2b-1))
-			b = tonumber(string.sub(v, g2b+1, #v))
-			v = { r, g, b }
-		end
-		if v ~= "" then
-			config[k] = v
-		end
-	end
+local function drawProp(propdef)
+	love.graphics.setColor(1, 1, 1)
+	love.graphics.draw(propdef.image, propdef.x, propdef.y, 0, propdef.xscale, propdef.yscale)
 end
 
--- Checks for references to uservars in
--- in [str], if found, it replaces it with
--- the uservar value
-function rtRep(str)
-	local nustr = str
-	for k, v in pairs(usereps) do
-		nustr = nustr:gsub(v, tostring(uservars[k]))
-	end
-	return nustr
+local drawDialog = {}
+
+function drawDialog.normal(ddef)
+	love.graphics.setColor(unpack(chars[ddef.char].color))
+	love.graphics.print(ddef.litchar, fonts.name, ddef.nameleft, ddef.nametop)
+	love.graphics.print(ddef.line, fonts.dialog, areas.dialog.safe.left + 2, areas.dialog.safe.top + 2)
 end
 
--- Draws a normal dialog line in the
--- dialog area
-function drawDialog.dialog(ddef)
-	love.graphics.setColor(chars[ddef.char].color[1] or config.def_font_color[1], chars[ddef.char].color[2] or config.def_font_color[2], chars[ddef.char].color[3] or config.def_font_color[3])
-	love.graphics .print(rtRep(ddef.line), fonts.dialog, areas[targets.dialog].sgeometry.left+5, areas[targets.dialog].sgeometry.top+5)
-end
-
--- Draws a choice type dialog
 function drawDialog.choice(ddef)
-	love.graphics.setColor(config.def_font_color[1], config.def_font_color[2], config.def_font_color[3])
-	love.graphics.print(rtRep(ddef.caption), fonts.choice, areas[targets.dialog].sgeometry.left+5, areas[targets.dialog].sgeometry.top+5)
-	for i, v in ipairs(ddef.choices) do
-		love.graphics.line(areas[targets.dialog].sgeometry.left, v.top, areas[targets.dialog].sgeometry.right, v.top)
-		if evalCond(v.cond) then
-			love.graphics.print(rtRep(v.choice), fonts.choice, v.left, v.top)
+	love.graphics.setColor(1, 1, 1)
+	love.graphics.print(ddef.line, fonts.caption, ddef.capleft, ddef.captop)
+	for _, chc in ipairs(ddef.choices) do
+		love.graphics.print(chc.choice, fonts.choice, chc.chleft, chc.chtop)
+		love.graphics.line(areas.dialog.geometry.left, chc.chtop, areas.dialog.geometry.right, chc.chtop)
+	end
+	love.graphics.line(areas.dialog.geometry.left, ddef.bline, areas.dialog.geometry.right, ddef.bline)
+end
+
+function drawDialog.touch(ddef)
+	
+	love.graphics.setColor(1, 1, 1)
+	love.graphics.print(ddef.line, fonts.dialog, areas.dialog.safe.left + 2, areas.dialog.safe.top + 2)
+	
+end
+
+-- BACKEND
+
+local function getFileList(dir, type)
+	local flist, ilist = {}, {}
+	flist = love.filesystem.getDirectoryItems(dir)
+	for _, v in ipairs(flist) do
+		if v:sub(-#type - 1, -1) == "." .. type then
+			table.insert(ilist, v)
 		end
 	end
-	love.graphics.line(areas[targets.dialog].sgeometry.left, ddef.lastline, areas[targets.dialog].sgeometry.right, ddef.lastline)
+	return ilist
 end
 
--- Just closes the game
-function drawDialog.quit()
-	love.event.quit()
+local function getImageList(dir)
+	return getFileList(dir, "png")
 end
 
--- Draws the caption of an interaction
--- dialog
-function drawDialog.interact()
-	love.graphics.setColor(config.def_font_color[1], config.def_font_color[2], config.def_font_color[3])
-	love.graphics.print(rtRep(dialogs[dialog_index].line), fonts.interaction, areas[targets.dialog].sgeometry.left+5, areas[targets.dialog].sgeometry.top+5)
+local function cacheCommon(bd)
+	comdir = bd .. "common/"
+	local imgs, idat = {}, {}
+	imgs = getImageList(comdir)
+	for _, iref in ipairs(imgs) do
+		idat = love.image.newImageData(comdir .. iref)
+		comres[iref:sub(1,-5)] = {
+			image = love.graphics.newImage(idat),
+			width = idat:getWidth(),
+			height = idat:getHeight()
+		}
+	end
 end
 
-
--- Draws characters' names in the
--- name area (if it exists)
-function drawName()
-	love.graphics.setColor(chars[dialogs[dialog_index].char].color[1], chars[dialogs[dialog_index].char].color[2], chars[dialogs[dialog_index].char].color[3])
-	love.graphics.print(chars[dialogs[dialog_index].char].name, fonts.name, areas[targets.name].sgeometry.left+5, areas[targets.name].sgeometry.top+5)
+local function findFontFile(dir)
+	local flist = love.filesystem.getDirectoryItems(dir)
+	local found = false
+	local idx = 1
+	local font = false
+	while (not found) and (idx <= #flist) do
+		if flist[idx]:sub(-4, -1) == ".ttf" then
+			found = true
+			font = flist[idx]
+		else
+			idx = idx + 1
+		end
+	end
+	return font
 end
 
+local schars = {}
 
--- Takes a condition definition and
--- passes it to the apropriate function
--- returns true if no condition is defined
-function evalCond(condef)
-	if not condef then
-		return true
+function schars.fixTo(scale)
+	local ah = areas.stage.geometry.bottom - areas.stage.safe.top
+	local th = scale * ah
+	local actim = ""
+	for char, cdef in pairs(chars) do
+		for iref, idef in pairs(cdef.images) do
+			chars[char].images[iref].scale = th / idef.height
+		end
+		actim = cdef.active.ref
+		chars[char].active.scale = cdef.images[actim].scale
+		chars[char].active.x = areas.stage.safe.left + (areas.stage.geometry.centerx - ((cdef.images[actim].width * cdef.active.scale) * cdef.active.relx))
+		chars[char].active.y = areas.stage.geometry.bottom - (cdef.active.scale * cdef.images[actim].height)
+		chars[char].active.fx = chars[char].active.x + (chars[char].images[chars[char].active.ref].width * chars[char].active.scale)
+		chars[char].active.fy = chars[char].active.y + (chars[char].images[chars[char].active.ref].height * chars[char].active.scale)
+	end
+end
+
+function schars.propmax()
+	local tallest = 0
+	local ah = areas.stage.geometry.bottom - areas.stage.safe.top
+	local tscale = 0
+	local actim = ""
+	for char, cdef in pairs(chars) do
+		for iref, idef in pairs(cdef.images) do
+			if idef.height > tallest then
+				tallest = idef.height
+			end
+		end
+	end
+	tscale = ah / tallest
+	for char, cdef in pairs(chars) do
+		for iref, idef in pairs(cdef.images) do
+			chars[char].images[iref].scale = tscale
+		end
+		actim = cdef.active.ref
+		chars[char].active.scale = cdef.images[actim].scale
+		chars[char].active.x = areas.stage.safe.left + (areas.stage.geometry.centerx - ((cdef.images[actim].width * cdef.active.scale) / 2))
+		chars[char].active.y = areas.stage.geometry.bottom - (cdef.active.scale * cdef.images[actim].height)
+		chars[char].active.fx = chars[char].active.x + (chars[char].images[chars[char].active.ref].width * chars[char].active.scale)
+		chars[char].active.fy = chars[char].active.y + (chars[char].images[chars[char].active.ref].height * chars[char].active.scale)
+	end
+	
+end
+
+local function scaleChars(mode)
+	if type(mode) == "string" then
+		if mode == "max" then
+			schars.fixTo(1)
+		else
+			schars[mode]()
+		end
 	else
-		return compareTo[condef.type](condef.var, condef.val)
+		if mode then
+			schars.fixTo(mode)
+		end
 	end
 end
 
 
--- returns true if uservars.[var] is equal
--- to [val], false otherwise
-function compareTo.equal(var, val)
-	return val == uservars[var]
-end
-
--- returns true if uservars.[var] is more
--- than [val], false otherwise
-function compareTo.more(var, val)
-	return val > uservars[var]
-end
-
--- returns true if uservars.[var] is less
--- than [val], false otherwise
-function compareTo.less(var, val)
-	return val < uservars[var]
-end
-
--- reads the content of the received
--- directory and caches PNG images
-local function cacheimages(dir)
-	local data = ""
-	local w, h = 0,0
-	local files = love.filesystem.getDirectoryItems(dir)
-	for _, v in ipairs(files) do
-		if v:sub(#v-3,#v) == ".png" then
-			data = love.image.newImageData(dir .. v)
-			w, h = data:getDimensions()
-			images[v:sub(0, #v-4)] = {
-				image = love.graphics.newImage(dir .. v),
-				width = w,
-				height = h
+local function getChars(scmode)
+	-- init vars
+	local flist = love.filesystem.getDirectoryItems(charsdir)
+	local inf = {}
+	local curcd = ""
+	local curid = ""
+	local iw, ih = 0, 0
+	local txr, txg, txb, sep = 0, 0, 0, 0
+	local chardef = {}
+	local xpos, ypos = 0, 0
+	local remstr = ""
+	-- build chars table
+	for _, file in ipairs(flist) do
+		inf = love.filesystem.getInfo(charsdir .. file)
+		if inf.type == "directory" then
+			chars[file] = { images = {} }
+		end
+	end
+	for char, _ in pairs(chars) do
+		-- add all images
+		curcd = charsdir .. char .. "/"
+		il = getImageList(curcd)
+		for _, iref in ipairs(il) do
+			curid = love.image.newImageData(curcd .. iref)
+			iw, ih = curid:getDimensions()
+			chars[char].images[iref:sub(1, -5)] = {
+				image = love.graphics.newImage(curid),
+				width = iw,
+				height = ih,
+				scale = 1,
+				ref = iref:sub(1, -5),
+				mask = imanip.createMask(curid)
 			}
 		end
-	end
-end
-
--- Recalculates the scales of all images
--- for all added characters, according to
--- the [scale] parameter
-function recalcScales(scale)
-	local iw, ih = 0,0
-	local wrat, hrat = 0, 0
-	if type(scale) == "number" then
-		for k, v in pairs(chars) do
-			for i, w in ipairs(v.images) do
-				w.scale = scale
-				w.left = areas[targets.stage].sgeometry.centerx - ((images[w.image].width * scale) / 2)
-				w.top = areas[targets.stage].sgeometry.top + (areas[targets.stage].sgeometry.height - w.height)
-			end
+		-- take additionl parameters for
+		-- [char id].chr file
+		chardef = {}
+		for line in love.filesystem.lines(curcd .. char .. ".chr") do
+			table.insert(chardef, line)
 		end
-	elseif type(scale) == "string" then
-		if scale == "max" then
-			for k, v in pairs(chars) do
-				for i, w in ipairs(v.images) do
-					wrat = images[w.image].width / areas[targets.stage].sgeometry.width
-					hrat = images[w.image].height / areas[targets.stage].sgeometry.height
-					if (wrat > 1) or (hrat > 1) then
-						w.scale = 1 / math.max(wrat, hrat)
-					else
-						w.scale = 1 / math.max(wrat, hrat)
-					end
-					w.left = areas[targets.stage].sgeometry.centerx - ((images[w.image].width * w.scale) / 2)
-					w.top = areas[targets.stage].sgeometry.top + (areas[targets.stage].sgeometry.height - (images[w.image].height * w.scale))
-				end
-			end
-		elseif scale == "eqmax" then
-			local tallest, widest, lscale = 0,0,0
-			for k,v in pairs(chars) do
-				for i, w in ipairs(v.images) do
-					if images[w.image].width > widest then widest = images[w.image].width end
-					if images[w.image].height > tallest then tallest = images[w.image].height end
-				end
-			end
-			wrat = areas[targets.stage].sgeometry.width / widest
-			hrat = areas[targets.stage].sgeometry.height / tallest
-			lscale = math.min(wrat, hrat)
-			for k,v in pairs(chars) do
-				for i, w in ipairs(v.images) do
-					w.scale = lscale
-					w.left = areas[targets.stage].sgeometry.centerx - ((images[w.image].width * w.scale) / 2)
-					w.top = areas[targets.stage].sgeometry.top + (areas[targets.stage].sgeometry.height - (images[w.image].height * w.scale))
-				end
-			end
+		-- take char's name from line 1
+		chars[char].name = chardef[1]
+		-- extract rgb values for speech
+		-- from line 2
+		sep = chardef[2]:find(",")
+		txr = tonumber(chardef[2]:sub(1, sep-1))
+		remstr = chardef[2]:sub(sep+1, -1)
+		sep = remstr:find(",")
+		txg = tonumber(remstr:sub(1, sep-1))
+		txb = tonumber(remstr:sub(sep+1, -1))
+		chars[char].color = { txr, txg, txb }
+		-- get active image from line 3
+		-- and center it
+		xpos = areas.stage.geometry.centerx - (chars[char].images[chardef[3]].width / 2)
+		ypos = areas.stage.geometry.bottom - chars[char].images[chardef[3]].height
+		chars[char].active = {
+			ref = chardef[3],
+			x = xpos,
+			y = ypos,
+			alpha = 1,
+			scale = 1,
+			angle = 0,
+			relx = 0.5,
+			rely = 1,
+			fx = xpos + chars[char].images[chardef[3]].width,
+			fy = ypos + chars[char].images[chardef[3]].height
+		}
+		-- make char visible at start or not
+		-- based on line 4
+		if chardef[4] == "true" then
+			chars[char].visible = true
+			table.insert(visiblechars, char)
+		else
+			chars[char].visible = false
 		end
+		-- add replacemdment
+		reps[char] = chardef[1]
 	end
-end
-
--- Takes a cached image reference
--- (file name without extension) and
--- creates a new image with the
--- image tiled to specified size [tw], 
--- [th], caches it, and returns image ref
-local function createTile(imageref, dw, dh)
-	local sdata = love.image.newImageData(config.basedir .. imageref .. ".png")
-	local sw, sh = sdata:getDimensions()
-	local ddata = love.image.newImageData(dw, dh)
-	for x = 0, dw-1 do
-		for y = 0, dh-1 do
-			ax = (x-1)% sw
-			ay = (y-1)%sh
-			r,g,b,a = sdata:getPixel(ax,ay)
-			ddata:setPixel(x,y,r,g,b,a)
-		end
-	end
-	local nuref = imageref .. "_tiled"
-	images[nuref] = {
-		image = love.graphics.newImage(ddata),
-		width = dw,
-		height = dh
+	scaleChars(scmode)
+	chars.narrator = {
+		name = "",
+		color = { 1, 1, 1 }
 	}
-	return nuref
 end
 
--- Makes a dialog line (for any kind of
--- dialog) fit horizontally within [tw] by
--- adding new lines (\n)
+local function isInStage(x, y)
+	if x < areas.stage.safe.left then
+		return false
+	elseif x > areas.stage.safe.right then
+		return false
+	elseif y < areas.stage.safe.top then
+		return false
+	elseif y > areas.stage.safe.bottom then
+		return false
+	else
+		return true
+	end
+end
+
+local function getValues(string, sepchar)
+	local retable = {}
+	local remstring = string
+	local found, last = false, false
+	local idx = 1
+	local val
+	while not last do
+		while (not found) and (idx <= #remstring) do
+			 if remstring:sub(idx, idx) == sepchar then
+				val = remstring:sub(1, idx - 1)
+				val = tonumber(val) or val
+				table.insert(retable, val)
+				remstring = remstring:sub(idx + 1, -1)
+				found = true
+			else
+				idx = idx + 1
+			end
+		end
+		if found then
+			found = false
+			idx = 1
+		else
+			remstring = tonumber(remstring) or remstring
+			table.insert(retable, remstring)
+			last = true
+		end
+	end
+	return retable
+end
+
+local function getTouched(x, y)
+	-- INIT VARS
+	local z = visibleprops.front
+	local piz = #z
+	local found = false
+	local toth = false
+	local idx = piz
+	local nux, nuy = 0, 0
+	local stdef = {}
+	local curchar, charac, charim = "", {}, {}
+	-- CHECK FRONT PROPS IN
+	-- REVERSE DRAWING ORDER
+	while (not found) and (idx >= 1) do
+		stdef = props[z[idx].prid].states[z[idx].stid]
+		nux, nuy = imanip.toMask(x, y, stdef.x, stdef.y, stdef.fx, stdef.fy, stdef.xscale, stdef.yscale)
+		if (nux and nuy) and (stdef.mask[nux][nuy]) then
+			found = true
+			toth = {
+				type = "prop",
+				pid = z[idx].prid,
+				sid = z[idx].stid
+			}
+		else
+			idx = idx - 1
+		end
+	end
+	-- RESET VARS
+	if not found then
+		idx = #visiblechars
+	end
+	-- CHECK CHARS IN TEVERSE
+	-- DRAWING ORDER
+	while (not found) and (idx >= 1) do
+		curchar = visiblechars[idx]
+		charac = chars[curchar].active
+		charim = chars[curchar].images[charac.ref]
+		nux, nuy = imanip.toMask(x, y, charac.x, charac.y, charac.fx, charac.fy, charac.scale)
+		if (nux and nuy) and (charim.mask[nux][nuy]) then
+			found = true
+			toth = {
+				type = "char",
+				pid = curchar,
+				sid = charac.ref
+			}
+		else
+			idx = idx - 1
+		end
+	end
+	-- RESET VARS
+	if not found then
+		z = visibleprops.back
+		piz = #z
+		idx = piz
+	end
+	-- CHECK FRONT PROPS IN
+	-- REVERSE DRAWING ORDER
+	while (not found) and (idx >= 1) do
+		stdef = props[z[idx].prid].states[z[idx].stid]
+		nux, nuy = imanip.toMask(x, y, stdef.x, stdef.y, stdef.fx, stdef.fy, stdef.xscale, stdef.xy)
+		if (nux and nuy) and (stdef.mask[nux][nuy]) then
+			found = true
+			toth = {
+				type = "prop",
+				pid = z[idx].prid,
+				sid = z[idx].stid
+			}
+		else
+			idx = idx - 1
+		end
+	end
+	-- RETURN TOUCHED THING
+	return toth
+end
+
+local touch = {}
+
+function touch.chars(x, y)
+	local tch = #visiblechars
+	local touched = false
+	local idx = tch
+	local curim, curac = {}, {}
+	while (not touched) and (idx >= 1) do
+		curac = chars[visiblechars[idx]].active
+		curim = chars[visiblechars[idx]].images[curac.ref]
+		nux, nuy = imanip.toMask(x, y, curac.x, curac.y, curac.fx, curac.fy, curac.scale)
+		if (nux and nuy) and curim.mask[nux][nuy] then
+			vnl.hideChar(visiblechars[idx])
+			touched = true
+		else
+			idx = idx - 1
+		end
+	end
+end
+
+local function getProps()
+	local prlist = getFileList(propsdir, "prp")
+	local tid, iw, ih = "", 0, 0
+	local stdtable = {}
+	local nw, nh = 0, 0
+	local propcom = {}
+	local lind = 1
+	local tx, ty, tzx, tzy = 0, 0
+	local vis = false
+	local rleft, rtop, rright, rbottom = 0, 0, 0, 0
+	local active = ""
+	for line in love.filesystem.lines(basedir .. "common.prp") do
+		propcom = getValues(line, ",")
+	end
+	nw = tonumber(propcom[1])
+	nh = tonumber(propcom[2])
+	tzx = areas.stage.geometry.width / nw
+	tzy = (areas.stage.geometry.bottom - areas.stage.safe.top) / nh
+	for order, prid in ipairs(prlist) do
+		props[prid:sub(1,-5)] = { states = {} }
+		for stdef in love.filesystem.lines(propsdir .. prid) do
+			stdtable = getValues(stdef, ",")
+			tid = love.image.newImageData(propsdir .. stdtable[1] .. ".png")
+			iw, ih = tid:getDimensions()
+			tx = areas.stage.geometry.left + ((areas.stage.geometry.width * stdtable[2]) - ((iw * tzx) / 2))
+			ty = areas.stage.geometry.top + ((areas.stage.geometry.height * stdtable[3]) - ((ih * tzy) / 2))
+			vis = stdtable[5] == "true"
+			props[prid:sub(1, -5)].states[stdtable[1]] = {
+				x = tx,
+				y = ty,
+				xscale = tzx,
+				yscale = tzy,
+				image = love.graphics.newImage(tid),
+				visible = vis,
+				fx = tx + (iw * tzx),
+				fy = ty + (ih * tzy),
+				mask = imanip.createMask(tid)
+			}
+			active = stdtable[1]
+			if vis then
+				table.insert(visibleprops[stdtable[4]], { prid = prid:sub(1, -5), stid = stdtable[1] })
+			end
+		end
+		props[prid:sub(1,-5)].active = active
+		props[prid:sub(1, -5)].z = stdtable[4]
+	end
+end
+
+local function halfAssParse(str)
+	local funparsep = str:find("%(")
+	local fun = str:sub(1, funparsep - 1)
+	local pars = str:sub(funparsep + 1, -2)
+	local params = getValues(pars, ",")
+	local funplace = ""
+	if vnl[fun] then
+		funplace = "sys"
+	elseif useractions[fun] then
+		funplace = "custom"
+	end
+	return { type = funplace, command = fun, parameters = params }
+end
+
+local function halfAssCondParse(str)
+	local evalop = {
+		{ sym = "=", fun = "equal" },
+		{ sym = "<", fun = "smaller" },
+		{ sym = ">", fun = "bigger" }
+	}
+	local found, idx, oppo = false, 1, 0
+	local op, fu = "", ""
+	while (not found) and (idx <= #evalop) do
+		oppo = str:find(evalop[idx].sym)
+		if oppo then
+			found = true
+			op = evalop[idx].sym
+			fu = evalop[idx].fun
+		else
+			idx = idx + 1
+		end
+	end
+	if found then
+		var = str:sub(1, oppo - 1)
+		val = str:sub(oppo + 1, -1)
+		return {
+			ref = var,
+			operator = fu,
+			value = val
+		}
+	else
+		return true
+	end
+end
+
+local function getDlgAction(acdef)
+	if not acdef then
+		return false
+	else
+		return halfAssParse(acdef)
+	end
+end
+
+local function getFonts(fdef)
+	local ffil = findFontFile(comdir)
+	local str = "Los hermanos sean unidos"
+	local arbitsize = 50
+	local arbitfont = ""
+	local tyar = {
+		name = "caption",
+		caption = "caption",
+		dialog = "dialog",
+		choice = "dialog"
+	}
+	if ffil then
+		arbitfont = love.graphics.newFont(comdir .. ffil, arbitsize)
+	else
+		arbitfont = love.graphics.newFont(arbitsize)
+	end
+	local arbitheight = arbitfont:getHeight(str)
+	local desirheight = 0
+	local desirsize = 0
+	for font, lines in pairs(fdef) do
+		desirheight = (areas[tyar[font]].safe.height - 4) / lines
+		desirsize = (desirheight * arbitsize) / arbitheight
+		if ffil then
+			fonts[font] = love.graphics.newFont(comdir .. ffil, desirsize)
+		else
+			fonts[font] = love.graphics.newFont(desirsize)
+		end
+	end
+end
+
 local function adjustLine(str, tw, fontref)
 	local spaces = {}
 	local found = false
 	local rtv = ""
 	local strl = #str
-	for i = 1, strl do
-		if str:sub(i,i) == " " then
-			table.insert(spaces, i)
-		end
-	end
-	local i = #spaces
-	while (not found) and (i > 0) do
-		 if fonts[fontref]:getWidth(str:sub(0, spaces[i])) < tw then
-			found = true
-			if fonts[fontref]:getWidth(str:sub(spaces[i]+1,#str)) < tw then
-				rtv = str:sub(0, spaces[i]-1) .. "\n" .. str:sub(spaces[i]+1, #str)
-			else
-				rtv = str:sub(0, spaces[i]-1) .. "\n" .. adjustLine(str:sub(spaces[i]+1, #str), tw, fontref)
-			end
-		else
-			i = i - 1
-		end
-	end
-	return rtv
-end
-
--- Reads the dialog from a file and
--- dumps it into [dialogs] table
-local function getDialog(file)
-	dialog = {}
-	local topts, acumh, theight, telems = 0,0,0,0
-	local tfound = false
-	local nuopt, nuact, cond = {}, {}, {}
-	local predlg = require(config.basedir .. file)
-	-- for all lines run reps and adjust
-	-- line to area
-	for i, v  in ipairs(predlg) do
-		if v.line then
-			for k, w in pairs(reps) do
-				v.line = string.gsub(v.line, k,w)
-			end
-			if fonts.dialog:getWidth(v.line) >= areas[targets.dialog].sgeometry.width then
-				v.line = adjustLine(v.line, areas[targets.dialog].sgeometry.width, "dialog")
-			end
-		elseif v.caption then
-			for k, w in pairs(reps) do
-				v.caption = string.gsub(v.caption, k,w)
-			end
-			if fonts.dialog:getWidth(v.caption) >= areas[targets.dialog].sgeometry.width then
-				v.caption = adjustcaption(v.caption, areas[targets.dialog].sgeometry.width, "dialog")
-			end
-		end
-		-- FOR CHOICE DIALOGS
-		if v.char == "choice" then
-			topts = #v.opt
-			for _, w in ipairs(v.opt) do
-				theight = theight + fonts.choice:getHeight(w.choice)
-			end
-			acumh =  fonts.choice:getHeight(v.line) + 5
-			for i, w in ipairs(v.opt) do
-				for k, vvv in pairs(reps) do
-					w.choice = string.gsub(w.choice, k,vvv)
-				end
-				if fonts.choice:getWidth(w.choice) >= areas[targets.dialog].sgeometry.width then
-					w.choice = adjustLine(w.choice, areas[targets.dialog].sgeometry.width, "choice")
-				end
-				if w.cond then
-					cond = {
-						var = w.cond.compare,
-						type = w.cond.method,
-						val = w.cond.value
-					}
-				else
-					cond = nil
-				end
-				nuopt[i] = {
-					cond = cond,
-					choice = w.choice,
-					next = w.next,
-					top = areas[targets.dialog].sgeometry.top + acumh + 10,
-					left = areas[targets.dialog].sgeometry.left+5,
-					bottom = areas[targets.dialog].sgeometry.top + acumh + fonts.choice:getHeight(w.choice) + 5,
-					right = areas[targets.dialog].sgeometry.right
-				}
-				acumh = acumh + fonts.choice:getHeight(w.choice) + 10
-			end
-			dialogs[i] = {
-				type = "choice",
-				caption = v.line,
-				choices = nuopt,
-				lastline = areas[targets.dialog].geometry.top + acumh + fonts.choice:getHeight(v.opt[opts]) + 5
-				-- lastline = areas[targets.dialog].geometry.top + acumh+5
-			}
-		-- FOR INTERACT DIALOG
-		elseif v.char == "interact" then
-			for j, w in ipairs(v.actions) do
-				if type(w.whentouch) == "string" then
-					if w.whentouch == "always" then
-						coords = { type = "always" }
-					else
-						if chars[w.whentouch] then
-							coords = { type = "char", char = w.whentouch }
-						end
-					end
-				else
-					coords = { type = "direct", x = w.x, y = w.y }
-				end
-				nuact[j] = {
-					coords = coords,
-					action = w.action
-				}
-			end
-			dialogs[i] = {
-				type = "interact",
-				actions = nuact,
-				line = v.line
-			}
-		-- FOR IN-DIALOG QUIT REQUEST
-		elseif v.char == "quit" then
-			dialogs[i] = {
-				type = "quit"
-			}
-		--;FOR NORMAL DIALOG
-		else
-			dialogs[i] = {
-				type = "dialog",
-				char = v.char,
-				line = v.line
-			}
-		end
-	end
-	dialog_index = 1
-	control = dialogs[dialog_index].type
-end
-
--- Reruns the replacements on a dialog
--- useful when addingba new character
--- after a dialog has been loaded
-local function updateDialog()
-	for i, v in ipairs(dialogs) do
-		for k, w in pairs(reps) do
-			if v.line then
-				v.line = string.gsub(v.line, k, w)
-			else
-				v.caption = string.gsub(v.caption, k, w)
-			end
-			if v.choices then
-				for j, vvv in ipairs(v.choices) do
-					vvv.choice = string.gsub(vvv.choice, k, w)
-				end
-				v.caption = string.gsub(v.caption, k, v)
-			end
-		end
-		if v.line then
-			if fonts.dialog:getWidth(v.line) >= areas[targets.dialog].sgeometry.width then
-				v.line = adjustLine(v.line, areas[targets.dialog].sgeometry.width, "dialog")
-			end
-		else
-			if fonts.dialog:getWidth(v.caption) >= areas[targets.dialog].sgeometry.width then
-				v.caption = adjustLine(v.caption, areas[targets.dialog].sgeometry.width, "dialog")
-			end
-		end
-	end
-end
-
--- Advances dialog pointer by one and
--- transfers flow control to the correct
--- function
-local function advanceDialog()
-	if dialog_index < #dialogs then
-		dialog_index = dialog_index + 1
-		control = dialogs[dialog_index].type
-	end
-end
-
--- Performs tap/click (touch) detection
--- for normal dialogs
-function touch.dialog(x,y)
-	if (x >= areas[targets.dialog].geometry.left) and (x <= areas[targets.dialog].geometry.right) and (y >= areas[targets.dialog].geometry.top) and (y <= areas[targets.dialog].geometry.bottom) then
-		advanceDialog()
-	end
-end
-
--- Performs touch detection for choice
--- type dialogs
-function touch.choice(x, y)
-	for i, v in ipairs(dialogs[dialog_index].choices) do
-		if evalCond(v.cond) then
-			if (x >= v.left) and (x <= v.right) and (y >= v.top) and (y <= v.bottom) then
-				if v.next == "end" then
-					drawDialog.quit()
-				else
-					getDialog(v.next)
-				end
-			end
-		end
-	end
-end
-
--- Performs touch detection for
--- interact type dialogs
-function touch.interact(x, y)
-	local actions = dialogs[dialog_index].actions
-	if actions[1].coords.type == "always" then
-		useractions[actions[1].action]()
+	local tls = 1
+	if fonts[fontref]:getWidth(str) <= tw then
+		rtv = str
 	else
-		local tacts = #actions
-		local i = 1
-		while (not done) and (i <= tacts) do
-			if checkCoord[actions[i].coords.type](x, y, actions[i].coords, actions[i].coords.char) then
-				done = true
-				useractions[actions[i].action]()
-			else
-				i = i + 1
+		for i = 1, strl do
+			if str:sub(i,i) == " " then
+				table.insert(spaces, i)
 			end
 		end
-	end
-end
-
--- returns true if [x] and [y] are within 
--- [coordef] and falsebotherwise
-function checkCoord.direct(x, y, coordef, _)
-	return ((x >= coordef.left) and (x <= coordef.right) and (y >= coordef.top) and (y <= coordef.bottom))
-end
-
--- returns true if [x] and [y] are within 
--- [cid] character's current image coords
-function checkCoord.char(x, y, _, cid)
-	local refleft = chars[cid].images[chars[cid].actimg].left
-	local reftop = chars[cid].images[chars[cid].actimg].top
-	local refright = chars[cid].images[chars[cid].actimg].left + (chars[cid].images[chars[cid].actimg].scale * images[chars[cid].images[chars[cid].actimg].image].width)
-	local refbottom = chars[cid].images[chars[cid].actimg].top + (chars[cid].images[chars[cid].actimg].scale * images[chars[cid].images[chars[cid].actimg].image].height)
-	return (x >= refleft) and (x <= refright) and (y >= reftop) and (y <= refbottom)
-end
-
--- Caches the fonts specified in .conf
--- file
-function getDefaultFonts()
-	-- Vars init
-	local lines = 7
-	local tf = ""
-	local th = 40
-	local ts = "Los hermanos sean unidos"
-	-- Set font size or calculate default
-	if (not config.dlg_font_size) or (config.dlg_font_size == "") or (config.dlg_font_size == "auto") then
-		while not found do
-			tf = love.graphics.newFont(config.basedir .. config.dlg_font, th)
-			if tf:getHeight(ts) * lines >= areas[targets.dialog].sgeometry.height - 10 then
-				while not found do
-					th = th - 1
-					tf = love.graphics.newFont(config.basedir .. config.dlg_font, th)
-					if tf:getHeight(ts) * lines < areas[targets.dialog].sgeometry.height - 10 then
-						found = true
-						config.dlg_font_size = th
-					end
-				end
-			else
-				th = th + 10
-			end
-		end
-	else
-		th = tonumber(config.dlg_font_size)
-	end
-	-- Get dialog font
-	vnlib.addFont("dialog", th, config.basedir .. config.dlg_font)
-	-- Reinit vars
-	lines = 6
-	th = 60
-	found = false
-	-- Set choice font size or calculate default
-	if (not config.choice_font_size) or (config.choice_font_size == "") or (config.choice_font_size == "auto") then
-		while not found do
-			tf = love.graphics.newFont(config.basedir .. config.choice_font, th)
-			if tf:getHeight(ts) * lines >= areas[targets.dialog].sgeometry.height - 10 then
-				while not found do
-					th = th - 1
-					tf = love.graphics.newFont(config.basedir .. config.choice_font, th)
-					if tf:getHeight(ts) * lines < areas[targets.dialog].sgeometry.height -10 then
-						found = true
-						config.choice_font_size = th
-					end
-				end
-			else
-				th = th + 10
-			end
-		end
-	else
-		th = tonumber(config.choice_font_size)
-	end
-	-- Get choice font
-	vnlib.addFont("choice", tonumber(config.choice_font_size), config.basedir .. config.choice_font)
-	-- Reinit font
-	lines = 5
-	th = 60
-	found = false
-	-- Set interaction font size or calculate default
-	if (not config.int_font_size) or (config.int_font_size == "") or (config.int_font_size == "auto") then
-		while not found do
-			tf = love.graphics.newFont(config.basedir .. config.int_font, th)
-			if tf:getHeight(ts) * lines >= areas[targets.dialog].sgeometry.height - 10 then
-				while not found do
-					th = th - 1
-					tf = love.graphics.newFont(config.basedir .. config.int_font, th)
-					if tf:getHeight(ts) * lines < areas[targets.dialog].sgeometry.height - 10  then
-						found = true
-						config.int_font_size = th
-					end
-				end
-			else
-				th = th + 10
-			end
-		end
-	else
-		th = tonumber(config.int_font_size)
-	end
-	-- Get interaction font
-	vnlib.addFont("interaction", th, config.basedir .. config.int_font)
-	-- Reinit vars
-	found = false
-	lines = 1
-	th = 60
-	-- Set name font size or calculate default
-	if (not config.name_font_size) or (config.name_font_size == "") or (config.name_font_size == "auto") then
-		while not found do
-			tf = love.graphics.newFont(config.basedir .. config.name_font, th)
-			if tf:getHeight(ts) * lines >= areas[targets.name].sgeometry.height - 10 then
-				while not found do
-					th = th - 1
-					tf = love.graphics.newFont(config.basedir .. config.name_font, th)
-					if tf:getHeight(ts) * lines < areas[targets.name].sgeometry.height - 10 then
-						found = true
-						config.name_font_size = th
-					end
-				end
-			else
-				th = th + 10
-			end
-		end
-	else
-		th = tonumber(config.name_font_size)
-	end
-	-- Set name font
-	vnlib.addFont("name", tonumber(config.name_font_size), config.basedir .. config.name_font)
-end
-
-
--- ACCESIBLE FUNCTIONS
-
-function vnlib.init(width, height, confdir)
-	confdir = confdir or ""
-	-- init screen geometry
-	scr.height = height
-	scr.width = width
-	scr.centerx = width/2
-	scr.centery = width/2
-	-- read config file
-	readconf(confdir)
-	-- cache images
-	cacheimages((config.basedir or "") .. (config.resdir or ""))
-	-- run start code
-	local fullpath = love.filesystem.getSource() .. config.basedir
-	dofile(fullpath .. "start.lua")
-	-- sort layers
-	if targets.dialog then table.insert(draword, "dialog") end
-	if targets.stage then table.insert(draword, "stage") end
-	if targets.name then table.insert(draword, "name") end
-	if targets.portrait then table.insert(draword, "portrait") end
-	-- get and store fonts for dialogs, choices and char names
-	getDefaultFonts()
-	-- load uaer actions
-	useractions = require(config.basedir .. "actions")
-	if useractions.start then useractions.start() end
-	-- load dialog
-	getDialog(config.entry_point)
-end
-
-
-function vnlib.draw()
-	if targets.stage then
-		drawbg[areas[targets.stage].background.type](areas[targets.stage])
-		for _,v in pairs(chars) do
-			if v.visible then
-				drawChar(v)
-			end
-		end
-		drawfg[areas[targets.stage].foreground.type](areas[targets.stage].foreground)
-	end
-	if targets.dialog then
-		drawbg[areas[targets.dialog].background.type](areas[targets.dialog])
-		drawDialog[dialogs[dialog_index].type](dialogs[dialog_index])
-		drawfg[areas[targets.dialog].foreground.type](areas[targets.dialog].foreground)
-	end
-	if targets.name then
-		drawbg[areas[targets.name].background.type](areas[targets.name])
-		if dialogs[dialog_index].char then
-			drawName()
-		end
-		drawfg[areas[targets.name].foreground.type](areas[targets.name].foreground)
-	end
-	if targets.portrait then
-		drawbg[areas[targets.portrait].background.type](areas[targets.portrait].background)
-		drawfg[areas[targets.portrait].foreground.type](areas[targets.portrait].foreground)
-	end
-end
-
-function vnlib.srtDefaultLayout(nflag, pflag)
-	vnlib.addArea("stgarea", {
-		left = 0,
-		right = "100%",
-		top = 0,
-		bottom = "72.5%",
-		background = {
-			type = "color",
-			color = { 0.4, 0, 0 }
-		},
-		foreground = {
-			type = "color",
-			fill_color = { 0.25, 0, 0 },
-			border_color = { 1, 1, 1 },
-			thickness = "4%",
-			same_thickness = true,
-			draw_inner_border = true,
-			draw_outer_border = false
-		}
-	})
-	vnlib.makeTarget("stgarea", "stage")
-	local stl, stt, str, stb = vnlib.getAreaCoords("stage")
-	local stsl, stst, stsr, stsb = vnlib.getAreaSafeCoords("stage")
-	vnlib.addArea("dlgarea", {
-		left = 0,
-		right = "100%",
-		top = "77.5%",
-		bottom = "100%",
-		background = {
-			type = "color",
-			color = { 0.1, 0.1, 0.15 }
-		},
-		foreground = {
-			type = "color",
-			fill_color = { 0.25, 0, 0 },
-			border_color = { 1, 1, 1 },
-			thickness = stsl - stl,
-			same_thickness = true,
-			draw_inner_border = true,
-			draw_outer_border = false
-		}
-	})
-	vnlib.makeTarget("dlgarea", "dialog")
-	local dlsl, dlst, dlsr, dlsb = vnlib.getAreaSafeCoords("dialog")
-	vnlib.addArea("namarea", {
-		left = stsl,
-		top = stsb + 1,
-		right = stsr,
-		bottom = dlst - 1,
-		background = {
-			type = "color",
-			color = { 0.4, 0, 0 }
-		},
-		foreground = {
-			type = "color",
-			fill_color = { 0.25, 0, 0 },
-			border_color = { 1, 1, 1 },
-			thickness = stsl - stl,
-			same_thickness = true,
-			draw_inner_border = true,
-			draw_outer_border = false
-		}
-	})
-	vnlib.makeTarget("namarea", "name")
-end
-
-
-function vnlib.addChar(cid, cdef)
-	-- init vars
-	local aw, ah, tw, th, wdif, hdif = 0,0,0,0,0,0
-	local itbl, ptbl = {}, {}
-	-- calculate character images scale based on image size and target area size
-	tw = areas[targets.stage].sgeometry.width
-	th = areas[targets.stage].sgeometry.height
-	for i, v in ipairs(cdef.images) do
-		aw = images[v].width
-		ah = images[v].height
-		wdif = aw / tw
-		hdif = ah / th
-		if (wdif > 1) and (wdif >= hdif) then
-			scale = wdif
-		elseif (hdif > 1) and (hdif >= wdif) then
-			scale = hdif
-		else
-			scale = 1
-		end
-		-- add character's  image, size and positions to a temp tableñ
-		itbl[i] = {
-			image = v,
-			scale = scale,
-			top = areas[targets.stage].sgeometry.top + (areas[targets.stage].geometry.height - (ah * scale)),
-			left = areas[targets.stage].sgeometry.centerx - ((aw * scale) / 2)
-		}
-	end
-		-- calculate portrait's scale based on it's size amd target area size, but only if a target area exists
-	if cdef.portrait and targets.portrait then
-		tw = areas[targets.stage].geometry.width
-		th = areas[targets.stage].geometry.height
-		for i, v in ipairs(cdef.portraits) do
-			aw = images[cdef.portraits[i]].width
-			ah = images[cdef.portaits[i]].height
-			wdif = aw / tw
-			hdif = ah / th
-			if (wdif > 1) or (hdif > 1) then
-				scale =  math.max(wdif, hdif)
-			elseif (wdif < 1) and (hdif < 1) then
-				scale = 1 / (math.min(wdif, hdif))
-			else
-				scale = 1
-			end
-			ptbl[i] = {
-				image = cdef.portraits[i],
-				scale = scale
-			}
-		end
-	else
-		ptbl = nil
-	end
-	chars[cid] = {
-		name = cdef.name,
-		images = itbl,
-		portraits = ptbl,
-		color = cdef.color or {1,1,1,1}, -- text color
-		visible = false,
-		actimg = 1 -- pointer to images array
-	}
-	reps["_" .. cid] = cdef.name
-	updateDialog()
-end
-
-
-function vnlib.getCharImage(cid, imgname)
-	local found = false
-	local timgs = #chars[cid].images
-	local rtv = false
-	local idx = 1
-	if images[imgname] then
-		while (not found) and (idx <= timgs) do
-			if chars[cid].images[idx].image == imgname then
+		local i = #spaces
+		while (not found) and (i > 0) do
+			 if fonts[fontref]:getWidth(str:sub(0, spaces[i])) < tw then
 				found = true
-				rtv = idx
+				if fonts[fontref]:getWidth(str:sub(spaces[i]+1,#str)) < tw then
+					rtv = str:sub(0, spaces[i]-1) .. "\n" .. str:sub(spaces[i]+1, #str)
+				else
+					rtv = str:sub(0, spaces[i]-1) .. "\n" .. adjustLine(str:sub(spaces[i]+1, #str), tw, fontref)
+				end
+			else
+				i = i - 1
+			end
+		end
+	end
+	strl = #str
+	for i = 1, strl do
+		if str:sub(i,i) == "\n" then
+			tls = tls + 1
+		end
+	end
+	return rtv, tls
+end
+
+local function performAction(act)
+	if act.type == "sys" then
+		vnl[act.command](unpack(act.parameters))
+	else
+		useractions[act.command](unpack(act.parameters))
+	end
+end
+
+local function getDialog(fname)
+	-- INIT VARS
+	local dlgt = {}
+	local act, next = {}, ""
+	local capx  capy, chleft, chtop, acumtop = 0, 0, 0, 0, 0
+	local nuchc, chs, cond = "", {}, {}
+	local tchdef, tchtype, tchth, touchables = {}, "", "", {}
+	-- ERASE PREVIOUS DIALOG
+	-- AND FETCH DIALOG FILE
+	dialog = {}
+	dlgdef = require(dialdir .. fname)
+	-- PROCESS EACH REGISTRY
+	for order, dlg in ipairs(dlgdef) do
+		-- COMMON ACTIONS
+		for ref, nu in pairs(reps) do
+			dlg.line = dlg.line:gsub("_" .. ref, nu)
+		end
+		-- EACH DIALOG TYPE IS
+		-- PROCESSED IN A 
+		-- DIFFERENT WAY
+		if dlg.char == "choice" then
+			-- FOR CHOICE TYPE DIALOGS
+			for order, chc in ipairs(dlg.choices) do
+				for ref, nu in pairs(reps) do
+					nuchc = chc.line:gsub(ref, nu)
+				end
+				if chc.cond then
+					cond = halfAssCondParse(chc.cond)
+				else
+					cond = false
+				end
+				if chc.action then
+					act = getDlgAction(chc.action)
+				elseif chc.next then
+					act = chc.next
+				else
+					act = false
+				end
+				chs[order] = {
+					choice = nuchc,
+					cond = cond,
+					consequence = act,
+					chleft = 0,
+					chtop = 0
+				}
+			end
+			capx = areas.caption.geometry.centerx - (fonts.name:getWidth(dlg.line) /2)
+			capy = areas.caption.geometry.centery - (fonts.name:getHeight(dlg.line) / 2)
+			dlgt = {
+				type = "choice",
+				line = dlg.line,
+				capleft = 0,
+				captop = 0,
+				choices = chs
+			}
+			nuchc = nil
+			chs = {}
+		elseif dlg.char == "touch" then
+			-- FOR TOUCH TYPE DIALOG
+			for order, tch in ipairs(dlg.touchables) do
+				touchables = {}
+				if tch.cond then
+					cond = halfAssCondParse(tch.cond)
+				else
+					cond = false
+				end
+				if chars[tch.thing] then
+					tchtype = "char"
+					tchth = tch.thing
+				elseif props[tch.thing] then
+					tchtype = "prop"
+					tchth = tch.thing
+				elseif tch.thing == "any" then
+					tchtype = "background"
+					tchth = false
+				end
+				if tch.action then
+					act = getDlgAction(tch.action)
+				else
+					act = tch.next
+				end
+				tchdef = {
+					cond = cond,
+					type = tchtype,
+					thing = tchth,
+					consequence = act,
+					advance = tch.advance
+				}
+				table.insert(touchables, tchdef)
+			end
+			dlgt = {
+				type = "touch",
+				line = dlg.line,
+				touches = touchables
+			}
+		else -- normal dialog assumed
+			-- FOR NORMAL TYPE DIALOG
+			if dlg.action then
+				act = getDlgAction(dlg.action)
+			elseif dialog.next then
+				act = dlg.next
+			else
+				act = false
+			end
+			capx = areas.caption.geometry.centerx - (fonts.name:getWidth(chars[dlg.char].name) /2)
+			capy = areas.caption.geometry.centery - (fonts.name:getHeight(chars[dlg.char].name) / 2)
+			dlgt = {
+				type = "normal",
+				char = dlg.char,
+				litchar = chars[dlg.char].name,
+				nameleft = capx,
+				nametop = capy,
+				line = dlg.line,
+				consequence = act
+			}
+		end
+		-- PUT THE PROCESSED DIALOG
+		-- LINE IN THE MAIN DIALOG
+		-- TABLE
+		table.insert(dialog, dlgt)
+	end
+	if #dialog < 10 then d.dolog(dialog) end
+	dindex = 1
+	dcontrol = dialog[1].type
+	prepro = false
+	if dialog[1].consequence then
+		performAction(dialog[1].consequence)
+	end
+end
+
+local evalSpec = {}
+
+function evalSpec.equal(r, v)
+	return uservars[r] == v
+end
+
+function evalSpec.smaller(r, v)
+	return uservars[r] < v
+end
+
+function evalSpec.bigger(r, v)
+	return uservars[r] > v
+end
+
+local function evalCond(condef)
+	if condef then
+		return evalSpec[condef.operator](condef.ref, condef.value)
+	else
+		return true
+	end
+end
+
+local function actionConsequence(conseq)
+	if type(conseq) == "table" then
+		if conseq.type == "sys" then
+			vnl[conseq.command](unpack(conseq.parameters))
+		else -- custom assumed
+			useractions[conseq.command](unpack(conseq.parameters))
+		end
+		dindex = dindex + 1
+		dcontrol = dialog[dindex].type
+		prepro = false
+	else -- type = string assumed
+		getDialog(conseq)
+	end
+end
+
+local preProcess = {}
+
+function preProcess.normal(ddef)
+	for ref, val in pairs(uservars) do
+		ddef.line = ddef.line:gsub("_" .. ref, tostring(val))
+	end
+	ddef.line = adjustLine(ddef.line, areas.dialog.safe.width - 4, "dialog")
+	prepro = true
+	return ddef
+end
+
+function preProcess.touch(ddef)
+	local rems = {}
+	for ref, val in pairs(uservars) do
+		ddef.line = ddef.line:gsub("_" .. ref, tostring(val))
+	end
+	for i, v in ipairs(ddef.touches) do
+		if not evalCond(v.cond) then
+			table.insert(rems, i)
+		end
+	end
+	for i = #rems, 1, -1 do
+		table.remove(ddef.touchables, rems[i])
+	end
+	ddef.line = adjustLine(ddef.line, areas.dialog.safe.width - 4, "dialog")
+	prepro = true
+	return ddef
+end
+
+function preProcess.choice(ddef)
+	local ls = 0
+	local rems = {}
+	local acum = 0
+	local chcl = 0
+	local lh = fonts.choice:getHeight()
+	for ref, val in pairs(uservars) do
+		ddef.line:gsub("_" .. ref, tostring(val))
+	end
+	ddef.line, ls = adjustLine(ddef.line, areas.dialog.safe.width - 4, "choice")
+	ddef.capleft = areas.caption.geometry.centerx - (fonts.caption:getWidth(ddef.line) / 2)
+	ddef.captop = areas.caption.geometry.centery - ((fonts.caption:getHeight() * ls) / 2)
+	for order, chc in pairs(ddef.choices) do
+		if evalCond(chc.cond) then
+			for ref, val in pairs(uservars) do
+				chc.choice = chc.choice:gsub("_" .. ref, tostring(val))
+			end
+			chc.choice, chcl = adjustLine(chc.choice, areas.dialog.safe.width, "choice")
+			chc.chleft = areas.dialog.safe.left + 2
+			chc.chtop = areas.dialog.safe.top + 2 + acum
+			chc.chbottom = areas.dialog.safe.top + 2 + acum + (chcl * lh)
+			acum = acum + (chcl * lh)
+		else
+			table.insert(rems, order)
+		end
+	end
+	for i = #rems, 1, -1 do
+		table.remove(ddef.choices, rems[i])
+	end
+	ddef.bline = areas.dialog.safe.top + 2 + acum
+	prepro = true
+	return  ddef
+end
+
+local touch = {}
+
+function touch.normal(x, y)
+	if dialog[dindex].consequence and (type(dialog[dindex].consequence) == "string") then
+		getDialog(dialog[dindex].consequence)
+	else
+		dindex = dindex + 1
+		dcontrol = dialog[dindex].type
+		prepro = false
+		if dialog[dindex].consequence and type(dialog[dindex].consequence) == "table" then
+			performAction(dialog[dindex].consequence)
+		end
+	end
+end
+
+function touch.choice(x, y)
+	local found, idx = false, 1
+	local tchoices = #dialog[dindex].choices
+	local cht = dialog[dindex].choices
+	while (not found) and (idx <= tchoices) do
+		if (x >= areas.dialog.safe.left) and (x <= areas.dialog.safe.right) and (y >= cht[idx].chtop) and (y <= cht[idx].chbottom) then
+			actionConsequence(cht[idx].consequence)
+			found = true
+		else
+			idx = idx + 1
+		end
+	end
+end
+
+function touch.touch(x, y)
+	local toth = getTouched(x, y)
+	local things = dialog[dindex].touches
+	local found, idx = false, 1
+	local totalthings = #things
+	if toth then
+		while (not found) and (idx <= totalthings) do
+			if (toth.pid == things[idx].thing) then
+				found = true
+				performAction(things[idx].consequence)
+				if things[idx].advance then
+					dindex = dindex + 1
+					dcontrol = dialog[dindex].type
+					prepro = false
+				end
 			else
 				idx = idx + 1
 			end
 		end
 	end
-	return rtv
 end
 
-function vnlib.getCharWidth(cid)
-	return images[chars[cid].images[chars[cid].actimg].image].width * chars[cid].images[chars[cid].actimg].scale
-end
-
-function vnlib.getCharHeight(cid)
-	return images[chars[cid].images[chars[cid].actimg].image].height * chars[cid].images[chars[cid].actimg].scale
-end
-
-function vnlib.getCharPos(cid)
-	return chars[cid].images[chars[cid].actimg].left, chars[cid].images[chars[cid].actimg].top
-end 
-
-function vnlib.showChar(cid, imgp)
-	chars[cid].visible = true
-	if not imgp then
-		imgp = chars[cid].actimg
-	elseif type(imgp) == "string" then
-		imgo = vnlib.getCharImage(cid, imgp)
-	end
-	chars[cid].actimg = imgp
+local function getCustom()
+	uservars = require(userdir .. "variables")
+	useractions = require(userdir .. "actions")
 end
 
 
-function vnlib.hideChar(cid)
-	chars[cid].visible = false
-end
+-- PUBLIC FUNCTIONS
 
+-- LOVE CONNECTION
 
-function vnlib.moveChar(cid, posx, posy)
-	if isper(posx) then
-		posx = areas[targets.stage].geometry.width * (posx:sub(1,#posx-1) / 100)
-	end
-	if isper(posy) then
-		posy = areas[targets.stage].geometry.height * (posy:sub(1,#posy-1) / 100)
-	end
-	chars[cid].images[chars[cid].actimg].left = posx or chars[cid].images[chars[cid].actimg].left
-	chars[cid].images[chars[cid].actimg].top = posy or chars[cid].images[chars[cid].actimg].top
-end
-
-function vnlib.distribChars(charar)
-	local tchars = #charar
-	local l = 1 / (tchars +1)
-	local offset, gridline, charwidth, charscale = 0,0,0,0
-	offset = areas[targets.stage].geometry.left
-	for i, v in ipairs(charar) do
-		gridline = areas[targets.stage].geometry.width * (i*l)
-		charwidth = vnlib.getCharWidth(v)
-		vnlib.moveChar(v,  offset + (gridline - (charwidth / 2)))
-	end
-end
-
-
-function vnlib.eqScales()
-	local tmp = {}
-	local minscale = 9999
-	local maxscale = 0
-	local widest, tallest = 0,0
-	local wratio, hratio = 0,0
-	for k, v in pairs(chars) do
-		for i, w in ipairs(v.images) do
-			if w.scale < minscale then minscale = w.scale end
-			if w.scale > maxscale then maxscale = w.scale end
-			table.insert(tmp, w.image)
-		end
-	end
-	if minscale < 1 then
-		recalcScales(minscale)
-	else
-		for _, v in ipairs(tmp) do
-			if images[v].width > widest then widest = images[v].width end
-			if images[v].height > tallest then tallest = images[v].height end
-		end
-		wratio = widest / areas[targets.stage].sgeometry.width
-		hratio = tallest / areas[targets.stage].sgeometry.height
-		recalcScales(math.min(1/wratio, 1/hratio))
-	end
-end
-
-
-function vnlib.maxScales()
-	recalcScales("max")
-end
-
-
-function vnlib.eqmaxScales()
-	recalcScales("eqmax")
-end
-
-function vnlib.addArea(aname, adef)
-	local dims = {
-		left = 0,
-		right = 0,
-		top = 0,
-		bottom = 0
+function vnl.init(width, height, bd, adef, charscale, dlgf, fontdef)
+	-- BUILD SCREEN GEOMETRY
+	-- TABLE
+	screen = {
+		geometry = {
+			left = 0,
+			top = 0,
+			right = width,
+			bottom = height,
+			centerx = width / 2,
+			centery = height / 2
+		}
 	}
-	local vlt, hlt = 0,0
-	local sg = {}
-	local isq, osq = nil, nil
-	local fgt = nil
-	for k, _ in pairs(dims) do
-		if isper(adef[k]) then
-			dims[k] = scr[ks.dims[k]] * (tonumber(adef[k]:sub(1,#adef[k]-1)) / 100)
-		else
-			dims[k] = adef[k]
+	-- HERE SHOULD GO DEFAULT
+	-- VALUES
+	
+	
+	
+	-- SET DIRECTORIES
+	basedir = bd
+	comdir = bd .. "common/"
+	charsdir = bd .. "chars/"
+	propsdir = bd .. "props/"
+	dialdir = bd .. "dialogs/"
+	userdir = bd .. "user/"
+	-- DO STARTUP STUFF
+	cacheCommon(basedir)
+	getAreas(adef)
+	getCustom()
+	getFonts(fontdef)
+	getChars(charscale)
+	getProps()
+	getDialog(dlgf)
+	
+end
+
+function vnl.draw(dt)
+	-- AREAS' BACKGROUNDS
+	for k, v in pairs(areas) do
+		drawbg[v.background.type](v)
+	end
+	-- BACK PROPS
+	for i, v in ipairs(visibleprops.back) do
+		drawprop(props[v.prid].states[v.stid])
+	end
+	-- CHARACTERS
+	for order, char in ipairs(visiblechars) do
+		drawChar(chars[char])
+	end
+	-- FRONT PROPS
+	for i, v in ipairs(visibleprops.front) do
+		drawProp(props[v.prid].states[v.stid])
+	end
+	-- DIALOG
+	if not prepro then
+		procdiag = preProcess[dcontrol](dialog[dindex])
+	end
+	drawDialog[dcontrol](procdiag)
+	-- AREAS' FOREGROUNDS
+	for _, v in pairs(areas) do
+		if v.foreground then
+			drawfg[v.foreground.type](v)
 		end
 	end
-	dims.width = dims.right - dims.left
-	dims.height = dims.bottom - dims.top
-	dims.centerx = dims.left + (dims.width / 2)
-	dims.centery = dims.top + (dims.height / 2)
-	if adef.background.type == "color" then
-		bgt = {
-			type = "color",
-			color = adef.background.color
-		}
-	elseif adef.background.type == "image" then
-		bgt = {
-			type = "image",
-			image = adef.background.image,
-			scalex = images[adef.background.image].width / (dims.right - dims.left),
-			scaley = images[adef.background.image].width / (dim.bottom - dims.top)
-		}
-	elseif adef.background.type == "tile" then
-		iref = createTile(adef.background.tile, dims.right - dims.left, dims.bottom - dims.top)
-		bgt = {
-			type = "image",
-			image = iref,
-			scalex = 1,
-			scaley = 1
-		}
-	end
-	if adef.foreground and (adef.foreground.type == "color") then
-		if isper(adef.foreground.thickness) then
-			if adef.foreground.same_thickness then
-				vlt = ((dims.width * (tonumber(adef.foreground.thickness:sub(1,#adef.foreground.thickness-1)) / 100) + dims.height * (tonumber(adef.foreground.thickness:sub(1,#adef.foreground.thickness-1)) / 100)) / 2)
-				hlt = vlt
-			else
-				vlt = dims.width * (tonumber(adef.foreground.thickness:sub(1,#adef.foreground.thickness-1)) / 100)
-				hlt = dims.height * (tonumber(adef.foreground.thickness:sub(1,#adef.foreground.thickness-1)) / 100)
-			end
-		else
-			vlt = adef.foreground.thickness
-			hlt = adef.foreground.thickness
-		end
-		if adef.foreground.draw_inner_border then
-			isq = {
-					dims.left + vlt,
-					dims.top + hlt,
-					dims.width - (vlt * 2),
-					dims.height - (hlt * 2)
-				}
-		end
-		if adef.foreground.draw_outer_border then
-			osq = {
-					dims.left,
-					dims.top,
-					dims.width,
-					dims.height
-				}
-		end
-		fgt = {
-			type = "color",
-			bcolor = adef.foreground.border_color,
-			fcolor = adef.foreground.fill_color,
-			lines = {
-				left = {
-					dims.left,
-					dims.top,
-					vlt,
-					dims.height - hlt
-				},
-				top = {
-					dims.left + vlt,
-					dims.top,
-					dims.width - vlt,
-					hlt
-				},
-				right = {
-					dims.right - vlt,
-					dims.top + hlt,
-					vlt,
-					dims.height - hlt
-				},
-				bottom = {
-					dims.left,
-					dims.bottom - hlt,
-					dims.width -vlt,
-					hlt
-				}
-			},
-			squares = {
-				inner = isq,
-				outter = osq
-			}
-		}
-		sg = {
-			left = dims.left + vlt,
-			top = dims.top + hlt,
-			right = dims.right - vlt,
-			bottom = dims.bottom - hlt,
-			width = (dims.right - vlt) - (dims.left + vlt),
-			height = (dims.bottom - hlt) - (dims.top + hlt),
-			centerx = (dims.left + vlt) + (((dims.right - vlt) - (dims.left + vlt)) / 2),
-			centery = (dims.top + hlt) + (((dims.bottom - hlt) - (dims.top + hlt)) / 2)
-		}
-	elseif not adef.foreground then
-		sg = dims
-	end
-	if adef.type then
-		targets[type] = aname
-	end
-	areas[aname] = {
-		geometry = dims,
-		sgeometry = sg,
-		background = bgt,
-		foreground = fgt
-	}
 end
 
+function vnl.evalTouch(x, y)
+	touch[dcontrol](x, y)
+end
 
-function vnlib.getAreaCoords(aname)
-	if areas[aname] then
-		return areas[aname].geometry.left, areas[aname].geometry.top, areas[aname].geometry.right, areas[aname].geometry.bottom
-	elseif areas[targets[aname]] then
-		return areas[targets[aname]].geometry.left, areas[targets[aname]].geometry.top, areas[targets[aname]].geometry.right, areas[targets[aname]].geometry.bottom
-	else
-		return 0, 0, 0, 0
+-- A REALLY DUMB FUNCTION THAT
+-- DOES NOTHING
+function vnl.nop() end
+
+-- AREA-RELATED
+
+function vnl.getAreaSize(aname)
+	return areas[aname].geometry.width, areas[aname].geometry.height
+end
+
+function vnl.getAreaPos(aname)
+	return areas[aname].geometry.left, areas[aname].geometry.top, areas[aname].geometry.right, areas[aname].geometry.bottom
+end
+
+function vnl.getSafeAreaSize(aname)
+	return areas[aname].safe.width, areas[aname].safe.height
+end
+
+function vnl.getSafeAreaPos(aname)
+	return areas[aname].safe.left, areas[aname].safe.top, areas[aname].safe.right, areas[aname].safe.bottom
+end
+
+function vnl.setAreaBG(aname, iref)
+	local xs = areas[aname].geometry.width / comres[iref].width
+	local ys = areas[aname].geometry.height / comres[iref].height
+	areas[aname].background.image = iref
+	areas[aname].background.xscale = xs
+	areas[aname].background.yscale = ys
+	areas[aname].background.type = "image"
+end
+
+function vnl.setForegroundColor(fc, bc)
+	if fc then
+		areas[aname].foreground.fill = fc
+	end
+	if bc then
+		areas[aname].foreground.border = bc
 	end
 end
 
-
-function vnlib.getAreaSafeCoords(aname)
-	if areas[aname] then
-		return areas[aname].sgeometry.left, areas[aname].sgeometry.top, areas[aname].sgeometry.right, areas[aname].sgeometry.bottom
-	elseif areas[targets[aname]] then
-		return areas[targets[aname]].sgeometry.left, areas[targets[aname]].sgeometry.top, areas[targets[aname]].sgeometry.right, areas[targets[aname]].sgeometry.bottom
-	else
-		return 0, 0, 0, 0
-	end
+function vnl.getBackgroundImage(aname)
+	return areas[aname].background.image
 end
 
+-- CHARACTER-RELATED
 
-function vnlib.getAreaSize(aname, axis)
-	if axis then
-		return areas[aname].geometry[axis]
-	else
-		return areas[aname].geometry.width, areas[aname].geometry.height
-	end
-end
-
-
-function vnlib.getSafeAreaSize(aname, axis)
-	if axis then
-		return areas[aname].sgeometry[axis]
-	else
-		return areas[aname].sgeometry.width, areas[aname].sgeometry.height
-	end
-end
-
-function vnlib.getSafeAreaCenter(aname, axis)
-	if axis then
-		return areas[aname].sgeometry["center" .. axis]
-	else
-		return areas[aname].sgeometry.centerx, areas[aname].sgeometry.centery
-	end
-end
-
-function vnlib.getAreaCenter(aname, axis)
-	if axis then
-		return areas[aname].geometry["center" .. axis]
-	else
-		return areas[aname].geometry.centerx, areas[aname].geometry.centery
-	end
-end
-
-function vnlib.isTarget(aname)
+function vnl.showChar(cid, iref)
 	local found = false
-	local rtv = false
-	for k, v in pairs(targets) do
-		if aname == v then
+	if iref then
+		vnl.changeCharImage(char, iref)
+	end
+	for order, char in ipairs(visibleChars) do
+		if char == cid then
 			found = true
-			rtv = k
 		end
 	end
-	return rtv
-end
-
-function vnlib.makeTarget(aname, target)
-	targets[target] = aname
-end
-
-function vnlib.showDialogOnce(str, timeout)
-	str = adjustLine(str, areas[targets.dialog].geometry.width, "dialog")
-	love.graphics.setColor(1,1,1,1)
-	love.graphics.print(str, fonts.dialog, areas[targets.dialog].geometrt.left+5, areas[targets.dialog].geometry.top+5)
-end
-
-function vnlib.addRep(k, v)
-		reps[k] = v
-end
-
-function vnlib.toDialog()
-	control = "dialog"
-	advanceDialog()
-end
-
-function vnlib.evalTouch(x,y)
-	touch[control](x,y)
-end
-
-function vnlib.getVal(varp)
-	return uservars[varp]
-end
-
-function vnlib.assignVal(varp,value)
-	if not uservars[varp] then
-		usereps[varp] = "_" .. varp
+	if not found then
+		table.insert(visiblechars, cid)
 	end
-	uservars[varp] = value
+	chars[cid].visible = true
 end
 
-function vnlib.addFont(target, fontsize, fontfile)
-	fontsize = fontsize or 16
-	if fontfile and (fontfile ~= "") then
-		if fontfile:sub(#fontfile-3,#fontfile) ~= ".ttf" then fontfile = fontfile .. ".ttf" end
-		fonts[target] = love.graphics.newFont(fontfile, fontsize)
-	else
-		fonts[target] = love.graphics.newFont(fontsize, "normal", love.graphics.getDPIScale())
+function vnl.hideChar(cid)
+	local found, idx = false, 1
+	d.dolog("cid: " .. tostring(cid))
+	chars[cid].visible = false
+	while (not found) and (idx <= #visiblechars) do
+		if visiblechars[idx] == cid then
+			table.remove(visiblechars, idx)
+			found = true
+		else
+			idx = idx + 1
+		end
 	end
 end
 
--- OS-SPECIFIC FUNCTIONS
-
--- THIS IS A MOBILE-SOECIFIC FUNCTION
--- FEEL FREE TO REMOVE FOR PC VERSIONS
-function love.touchpressed(id, tx, ty, dx, dy, tp)
-	nutouch = true
+function vnl.changeCharImage(cid, iref)
+	local acref = chars[cid].active
+	local chimg = chars[cid].images[iref]
+	local th = areas.stage.geometry.bottom - areas.stage.safe.top
+	acref.ref = iref
+	acref.scale = chimg.scale
+	acref.x = areas.stage.safe.left + ((areas.stage.safe.width * acref.relx) - (chimg.width * acref.scale) / 2)
+	acref.y = areas.stage.safe.top + ((th * acref.rely) - (chimg.height * acref.scale) / 2)
+	chars[cid].active.fx = chars[cid].active.x + (chars[cid].images[chars[cid].active.ref].width * chars[cid].active.scale)
+	chars[cid].active.fy = chars[cid].active.y + (chars[cid].images[chars[cid].active.ref].height * chars[cid].active.scale)
 end
 
-return vnlib
+function vnl.getCharOrder(cid)
+	local idx = 1
+	while (not found) and (idx <= #visiblechars) do
+		if visiblechars[idx] == cid then
+			return idx
+		end
+	end
+	return false
+end
+
+function vnl.stepCharFront(cid)
+	local order = vnl.getCharOrder(cid)
+	if order and order > 1 then
+		visiblechars[order] = visblechars[order - 1]
+		visiblechars[order - 1] = cid
+	end
+end
+
+function vnl.stepCharBack(cid)
+	local order = vnl.getCharOrder(cid)
+	if order and order < #visiblechars then
+		visiblechard[order] = visiblechars[order+1]
+		visiblechars[order + 1] = cid
+	end
+end
+
+function vnl.bringCharFront(cid)
+	local order = vnl.getCharOrder(cid)
+	if order and order > 1 then
+		table.remove(visiblechars, order)
+		table.insert(visiblechars, cid,1)
+	end
+end
+
+function vnl.bringCharBack(cid)
+	local order = vnl.getCharOrder(cid)
+	if order and order > 1 then
+		table.remove(visiblechars, order)
+		table.insert(visiblechars, cid)
+	end
+end
+
+function vnl.moveChar(cid, nurelx, nurely)
+	local th = areas.stage.geometry.bottom - areas.stage.safe.top
+	if nurelx then
+		chars[cid].active.relx = nurelx
+		chars[cid].active.x = areas.stage.safe.left + ((areas.stage.safe.width * chars[cid].active.relx) - (chars[cid].images[chars[cid].active.ref].width * chars[cid].active.scale) / 2)
+		chars[cid].active.fx = chars[cid].active.x + (chars[cid].images[chars[cid].active.ref].width * chars[cid].active.scale)
+	end
+	if nurely then
+		chars[cid].active.rely = nurely
+		chars[cid].active.y = areas.stage.safe.top + ((th * chars[cid].active.rely) - (chars[cid].images[chars[cid].active.ref].height * chars[cid].active.scale) / 2)
+		chars[cid].active.fy = chars[cid].active.y + (chars[cid].images[chars[cid].active.ref].height * chars[cid].active.scale)
+	end
+end
+
+function vnl.getCharWidth(cid)
+	return chars[cid].images[chars[cid].active.ref].width * chars[cid].active.scale
+end
+
+function vnl.getCharHeight(cid)
+	return chars[cid].images[chars[cid].active.ref].height * chars[cid].active.scale
+end
+
+function vnl.getCharBox(cid)
+	local left = chars[cid].active.x
+	local top = chars[cid].active.y
+	return left, top, left + vnl.getCharWidth(cid), top + vnl.getCharHeight(cid)
+end
+
+function vnl.getCharPos(cid)
+	return chars[cid].active.x, chars[cid].active.y
+end
+
+function vnl.getCharRelativePos(cid)
+	return chars[cid].active.relx, chars[cid].active.rely
+end
+
+
+-- PROP-RELATED
+
+function vnl.hideProp(prid, stid)
+	local zprops = visibleprops[props[prid].z]
+	local tprops = #zprops
+	stid = stid or props[prid].active
+	local found, idx = false, 1
+	while (not found) and (idx <= tprops) do
+		if zprops[idx].prid == prid then
+			found = true
+			table.remove(visibleprops[props[prid].z], idx)
+		else
+			idx = idx + 1
+		end
+	end
+	props[prid].states[stid]. visible = false
+end
+
+function vnl.showProp(prid, stid, z)
+	z = z or props[prid].z
+	stid = stid or props[prid].active
+	local found, idx = false, 1
+	local zprop = visibleprops[z]
+	local tprops = #zprop
+	local tdef = {}
+	while (not found) and (idx <= tprops) do
+		if zprop[idx] == prid then
+			found = true
+		else
+			idx = idx + 1
+		end
+	end
+	if not found then
+		tdef = {
+			prid = prid,
+			stid = stid
+		}
+		table.insert(visibleprops[z], tdef)
+	end
+	props[prid].states[stid].visible = false
+end
+
+function vnl.changePropState(prid, stid)
+	-- INIT VARD
+	local zprop = visibleprops[props[prid].z]
+	local tprops = #zprop
+	local found, idx = false, 1
+	-- MAKE ALL STATES OF PRID PROP
+	-- INVISIBLE
+	for state, stdef in pairs(props[prid].states) do
+		if state == stid then
+			props[prid].states[stid].visible = true
+		else
+			props[prid].states[stid].visible = false
+		end
+	end
+	-- CHANGE ACTIVE STATE TO STID
+	-- MAKE STID STATE VISIBLE
+	props[prid].active = stid
+	props[prid].states[stid].visible = true
+	-- FIND PRID IN DRAWING PIPELINE
+	-- AND IF FOUND CHANGE DTSTE TO
+	-- STID
+	while (not found) and (idx <= tprops) do
+		if zprop[idx].prid == prid then
+			found = true
+			visibleprops[props[prid].z].stid = stid
+		else
+			idx = idx + 1
+		end
+	end
+end
+
+function vnl.getPropVisibility(prid)
+	return props[prid].states[props[prid].active].visible
+end
+
+function vnl.getPropState(prid)
+	return ptops[prid].active
+end
+
+function vnl.getPropSize(prid, stid)
+	stid = stid or props[prid].states[props[prid].active]
+	local prop = props[prid].states[stid]
+	return prop.fx - prop.x, prop.fy - ptop.y
+end
+
+function vnl.getPropPos(prid)
+	local stid = props[prid].states[props[prid].active]
+	return stid.x, stid.y
+end
+
+function vnl.propBehindChars(prid)
+	local stid = props[prid].states[props[prid].active]
+	local found, idx = false, 1
+	local zprop = visibleprops.front
+	local tprops = #zprop
+	local tdef = {}
+	if props[prid].z == "front" then
+		while (not found) and (ifx <= tprops) do
+			if zprop[idx].prid == prid then
+				found = true
+				table.remove(visibleprops.front, idx)
+				tdef = { prid = prid, stid = props[prid].active }
+				table.insert(visibleprops.front, tdef)
+			else
+				idx = idx + 1
+			end
+		end
+		props[prid].z = "back"
+	end
+end
+
+function vnl.propsAheadChars(prid)
+	local stid = props[prid].states[props[prid].active]
+	local found, idx = false, 1
+	local zprop = visibleprops.back
+	local tprops = #zprop
+	local tdef = {}
+	if props[prid].z == "back" then
+		while (not found) and (ifx <= tprops) do
+			if zprop[idx].prid == prid then
+				found = true
+				table.remove(visibleprops.back, idx)
+				tdef = { prid = prid, stid = props[prid].active }
+				table.insert(visibleprops.front, tdef)
+			else
+				idx = idx + 1
+			end
+		end
+		props[prid].z = "front"
+	end
+end
+
+function vnl.getPropOrder(prid)
+	local zprop = visiblechars[props[prid].z]
+	local tprops = #zprops
+	local order = false
+	while (not found) and (idx <= tprops) do
+		if zprops[idx].prid == prid then
+			order = idx
+			found = true
+		else
+			idx = idx + 1
+		end
+	end
+	return order
+end
+
+function vnl.stepPropFront(prid)
+	local order = vnl.getPropOrder(prid)
+	local zprop = visibleprops[props[prid].z]
+	if order < #zprop then
+		zprop[order] = zprop[order + 1]
+		zprop[order + 1] = { prid = prid, stid = props[prid].active }
+	end
+end
+
+function vnl.stepPropBack(prid)
+	local order = vnl.getPropOrder(prid)
+	local zprop = visibleprops[props[prid].z]
+	if order > 1 then
+		zprop[order] = zprop[order - 1]
+		zprop[order - 1] = { prid = prid, stid = props[prid].active }
+	end
+end
+
+function vnl.bringPropFront(prid)
+	local order = vnl.getPropOrder(prid)
+	local zprop = visibleprops[props[prid].z]
+	local tprops = #zprop
+	if order < #zprop then
+		table.remove(zprop, order)
+		tdef = { prid = prid, stid = props[prid].active }
+		table.insert(zprop, tdef)
+	end
+end
+
+function vnl.bringPropBack(prid)
+	local order = vnl.getPropOrder(prid)
+	local zprop = visibleprops[props[prid].z]
+	local tprops = #zprop
+	if order > 1 then
+		table.remove(zprop, order)
+		tdef = { prid = prid, stid = props[prid].active }
+		table.insert(zprop, tdef, 1)
+	end
+end
+
+-- USERVARS-RELATED
+
+function vnl.setVar(var, val)
+	uservars[var] = val
+end
+
+function vnl.getVar(var)
+	return uservars[var]
+end
+
+function vnl.sumVar(var, val)
+	uservars[var] = uservars[var] + val
+end
+
+function vnl.minusVar(var, val)
+	uservars[var] = val - uservars[var]
+end
+
+function vnl.valMinus(var, val)
+	uservars[var] = uservars[var] - val
+end
+
+function vnl.timesVar(var, val)
+	uservars[var] = uservars[var] * val
+end
+
+function vnl.byVar(var, val)
+	uservars[var] = val / uservars[var]
+end
+
+function vnl.varBy(var, val)
+	uservars[var] = uservars[var] / val
+end
+
+function vnl.incVar(var, val)
+	uservars[var] = uservars[var], 1
+end
+
+function vnl.decVar(var, val)
+	uservars[var] = uservars[var] - 1
+end
+
+return vnl
