@@ -1,5 +1,7 @@
 vnl = {}
 
+-- LOTSA VAR INITIALIZATIONS
+
 local imanip = require("vnlite/imanip")
 local screen = {}
 local comres = {}
@@ -16,6 +18,7 @@ local visibleprops = {
 	front = {},
 	back = {}
 }
+local menu = {}
 local basedir = ""
 local comdir = ""
 local charsdir = ""
@@ -25,8 +28,10 @@ local dindex = 1
 local dcontrol = ""
 local prepro = false
 local procdiag = {}
+local curmenlev = "main"
+local firstdialog = {}
 
-
+-- BACKEND
 
 local function getNum(per)
 	local super = tonumber(per:sub(1,-2))
@@ -34,7 +39,6 @@ local function getNum(per)
 end
 
 local function areageometry(adef)
-	
 	local geom = {
 		left = screen.geometry.right * adef.left,
 		top = screen.geometry.bottom * adef.top,
@@ -65,7 +69,6 @@ local function imagebg(bgdef, geom)
 end
 
 function tilebg(bgdef, geom)
-	
 	local tid = love.image.newImageData(basedir .. "common/" .. bgdef.image .. ".png")
 	tid = imanip.tile(tid, geom.width, geom.height)
 	local tname = bgdef.image .. "_t" .. geom.width .. "x" .. geom.height
@@ -278,7 +281,6 @@ local function composeFrame(lids, cids, geom, vt, ht, cs)
 			top = geom.height - ht
 		}
 	}
-	
 	local coff = {
 		top_left = {
 			left = 0,
@@ -295,7 +297,7 @@ local function composeFrame(lids, cids, geom, vt, ht, cs)
 		bottom_left = {
 			left = 0,
 			top = geom.height - cs
-		},
+		}
 	}
 	-- init vars (and create frame image
 	-- data)
@@ -347,7 +349,6 @@ local function getFrameName()
 	return name
 end
 
-
 local function imageFG(fgdef, geom)
 	-- INICIAR VARIABLES
 	-- LINEAS
@@ -389,7 +390,6 @@ local function imageFG(fgdef, geom)
 	}
 	-- DEVOLVER
 	return fg, sg
-	
 end
 
 -- accepts either a file or a table
@@ -409,8 +409,6 @@ local function getAreas(adef)
 			bg = imagebg(v.background, geom)
 		elseif v.background.type == "tile" then
 			bg = tilebg(v.background, geom)
-		else
-			
 		end
 		if v.foreground then
 			if v.foreground.type == "plain" then
@@ -425,14 +423,12 @@ local function getAreas(adef)
 			fg = false
 			sgeom = geom
 		end
-		
 		areas[k] = {
 			geometry = geom,
 			background = bg,
 			foreground = fg,
 			safe = sgeom
 		}
-		
 	end
 end
 
@@ -498,13 +494,38 @@ function drawDialog.choice(ddef)
 end
 
 function drawDialog.touch(ddef)
-	
 	love.graphics.setColor(1, 1, 1)
 	love.graphics.print(ddef.line, fonts.dialog, areas.dialog.safe.left + 2, areas.dialog.safe.top + 2)
-	
 end
 
--- BACKEND
+local function drawMenu()
+	local curmenu = menu[curmenlev]
+	
+	if curmenu.background.type == "color" then
+		love.graphics.setColor(unpack(curmenu.background.color))
+		love.graphics.rectangle("fill", screen.geometry.left, screen.geometry.top, screen.geometry.right, screen.geometry.bottom)
+	else
+		love.graphics.setColor(1, 1, 1)
+		love.graphics.draw(comres[curmenu.background.image].image, screen.geometry.left, screen.geometry.top)
+	end
+	love.graphics.setColor(1, 1, 1)
+	for _, deco in ipairs(curmenu.deco) do
+		love.graphics.draw(comres[deco.image].image, deco.left, deco.top, 0, deco.xscale, deco.yscale)
+	end
+	local buttype = curmenu.buttons.type
+	local buttcom = curmenu.buttons[buttype]
+	for _, butt in ipairs(curmenu.buttons.options) do
+		
+		love.graphics.setColor(unpack(buttcom.background))
+		love.graphics[buttype]("fill", butt.left, butt.top, butt.width, butt.height)
+		love.graphics.setColor(unpack(buttcom.border))
+		love.graphics[buttype]("line", butt.left, butt.top, butt.width, butt.height)
+		love.graphics.setColor(unpack(buttcom.text))
+		love.graphics.print(butt.caption, curmenu.font, butt.txleft, butt.txtop)
+		
+	end
+	
+end
 
 local function getFileList(dir, type)
 	local flist, ilist = {}, {}
@@ -521,8 +542,8 @@ local function getImageList(dir)
 	return getFileList(dir, "png")
 end
 
-local function cacheCommon(bd)
-	comdir = bd .. "common/"
+local function cacheCommon()
+	-- comdir = basedir .. "common/"
 	local imgs, idat = {}, {}
 	imgs = getImageList(comdir)
 	for _, iref in ipairs(imgs) do
@@ -594,7 +615,6 @@ function schars.propmax()
 		chars[char].active.fx = chars[char].active.x + (chars[char].images[chars[char].active.ref].width * chars[char].active.scale)
 		chars[char].active.fy = chars[char].active.y + (chars[char].images[chars[char].active.ref].height * chars[char].active.scale)
 	end
-	
 end
 
 local function scaleChars(mode)
@@ -610,7 +630,6 @@ local function scaleChars(mode)
 		end
 	end
 end
-
 
 local function getChars(scmode)
 	-- init vars
@@ -837,49 +856,51 @@ end
 
 local function getProps()
 	local prlist = getFileList(propsdir, "prp")
-	local tid, iw, ih = "", 0, 0
-	local stdtable = {}
-	local nw, nh = 0, 0
-	local propcom = {}
-	local lind = 1
-	local tx, ty, tzx, tzy = 0, 0
-	local vis = false
-	local rleft, rtop, rright, rbottom = 0, 0, 0, 0
-	local active = ""
-	for line in love.filesystem.lines(basedir .. "common.prp") do
-		propcom = getValues(line, ",")
-	end
-	nw = tonumber(propcom[1])
-	nh = tonumber(propcom[2])
-	tzx = areas.stage.geometry.width / nw
-	tzy = (areas.stage.geometry.bottom - areas.stage.safe.top) / nh
-	for order, prid in ipairs(prlist) do
-		props[prid:sub(1,-5)] = { states = {} }
-		for stdef in love.filesystem.lines(propsdir .. prid) do
-			stdtable = getValues(stdef, ",")
-			tid = love.image.newImageData(propsdir .. stdtable[1] .. ".png")
-			iw, ih = tid:getDimensions()
-			tx = areas.stage.geometry.left + ((areas.stage.geometry.width * stdtable[2]) - ((iw * tzx) / 2))
-			ty = areas.stage.geometry.top + ((areas.stage.geometry.height * stdtable[3]) - ((ih * tzy) / 2))
-			vis = stdtable[5] == "true"
-			props[prid:sub(1, -5)].states[stdtable[1]] = {
-				x = tx,
-				y = ty,
-				xscale = tzx,
-				yscale = tzy,
-				image = love.graphics.newImage(tid),
-				visible = vis,
-				fx = tx + (iw * tzx),
-				fy = ty + (ih * tzy),
-				mask = imanip.createMask(tid)
-			}
-			active = stdtable[1]
-			if vis then
-				table.insert(visibleprops[stdtable[4]], { prid = prid:sub(1, -5), stid = stdtable[1] })
-			end
+	if prlist and (#prlist > 0) then
+		local tid, iw, ih = "", 0, 0
+		local stdtable = {}
+		local nw, nh = 0, 0
+		local propcom = {}
+		local lind = 1
+		local tx, ty, tzx, tzy = 0, 0
+		local vis = false
+		local rleft, rtop, rright, rbottom = 0, 0, 0, 0
+		local active = ""
+		for line in love.filesystem.lines(basedir .. "common.prp") do
+			propcom = getValues(line, ",")
 		end
-		props[prid:sub(1,-5)].active = active
-		props[prid:sub(1, -5)].z = stdtable[4]
+		nw = tonumber(propcom[1]) or 0
+		nh = tonumber(propcom[2]) or 0
+		tzx = areas.stage.geometry.width / nw
+		tzy = (areas.stage.geometry.bottom - areas.stage.safe.top) / nh
+		for order, prid in ipairs(prlist) do
+			props[prid:sub(1,-5)] = { states = {} }
+			for stdef in love.filesystem.lines(propsdir .. prid) do
+				stdtable = getValues(stdef, ",")
+				tid = love.image.newImageData(propsdir .. stdtable[1] .. ".png")
+				iw, ih = tid:getDimensions()
+				tx = areas.stage.geometry.left + ((areas.stage.geometry.width * stdtable[2]) - ((iw * tzx) / 2))
+				ty = areas.stage.geometry.top + ((areas.stage.geometry.height * stdtable[3]) - ((ih * tzy) / 2))
+				vis = stdtable[5] == "true"
+				props[prid:sub(1, -5)].states[stdtable[1]] = {
+					x = tx,
+					y = ty,
+					xscale = tzx,
+					yscale = tzy,
+					image = love.graphics.newImage(tid),
+					visible = vis,
+					fx = tx + (iw * tzx),
+					fy = ty + (ih * tzy),
+					mask = imanip.createMask(tid)
+				}
+				active = stdtable[1]
+				if vis then
+					table.insert(visibleprops[stdtable[4]], { prid = prid:sub(1, -5), stid = stdtable[1] })
+				end
+			end
+			props[prid:sub(1,-5)].active = active
+			props[prid:sub(1, -5)].z = stdtable[4]
+		end
 	end
 end
 
@@ -1132,7 +1153,6 @@ local function getDialog(fname)
 		-- TABLE
 		table.insert(dialog, dlgt)
 	end
-	if #dialog < 10 then d.dolog(dialog) end
 	dindex = 1
 	dcontrol = dialog[1].type
 	prepro = false
@@ -1241,6 +1261,54 @@ function preProcess.choice(ddef)
 	return  ddef
 end
 
+local function getMenuTouch(x, y)
+	local found, idx, rtv = false, 1, false
+	local cmen = menu[curmenlev].buttons.options
+	local topts = #cmen
+	local copt = {}
+	while (not found) and (idx <= topts) do
+		copt = cmen[idx]
+		if (x >= copt.left) and (x <= copt.right) and (y >= copt.top) and (y <= copt.bottom) then
+			found = true
+			rtv = idx
+		else
+			idx = idx + 1
+		end
+	end
+	if found then
+		return cmen[rtv].action
+	else
+		return false
+	end
+end
+
+local menuactions = {}
+
+function menuactions.start()
+	getDialog(firstdialog)
+end
+
+function menuactions.quit()
+	love.event.quit(0)
+end
+
+function menuactions.exit()
+	love.event.quit(0)
+end
+
+local function performMenuAction(act)
+	if menu[act] then
+		curmenlev = act
+	elseif menuactions[act] then
+		menuactions[act]()
+	elseif useractions[act] then
+		useractions[act]()
+	else
+		
+	end
+	
+end
+
 local touch = {}
 
 function touch.normal(x, y)
@@ -1292,20 +1360,89 @@ function touch.touch(x, y)
 	end
 end
 
+function touch.menu(x, y)
+	local touched = getMenuTouch(x, y)
+	if touched then performMenuAction(touched) end
+end
+
 local function getCustom()
 	uservars = require(userdir .. "variables")
 	useractions = require(userdir .. "actions")
 end
 
+local function getMenu(menudef)
+	local tid,tirw, tirh, sw, sh = "", 0, 0, 0, 0
+	local fts, fsize = 0, 0
+	local bl, bt, br, bb, bw, bh = 0, 0, 0, 0, 0, 0
+	if type(menudef) == "string" then
+		menudef = require(mendef)
+	end
+	for mename, def in pairs(menudef) do
+		if def.background.type == "tile" then
+			tid = iman.tile(love.image.newImageData(comdir .. def.background.image .. ".png"), screen.geometry.right, screen.geometry.left)
+			def.background.type = "image"
+			def.background.image = love.graphics.newImage(tid)
+		end
+		for order, decodef in ipairs(def.deco) do
+			tirw = comres[decodef.image].width
+			tirh = comres[decodef.image].height
+			decodef.xscale = (screen.geometry.right * decodef.xspan) / tirw
+			decodef.yscale = (screen.geometry.bottom * decodef.yspan) / tirh
+			sw = tirw * decodef.xscale
+			sh = tirh * decodef.yscale
+			decodef.left = (screen.geometry.right * decodef.xpos) - (sw / 2)
+			decodef.top = (screen.geometry.bottom * decodef.ypos) - (sh / 2)
+			decodef.xspan = nil
+			decodef.yspan = nil
+			decodef.xpos = nil
+			decodef.ypos = nil
+		end
+		fts = screen.geometry.bottom * def.font.size
+		fsize = fts
+		if def.font.face and (def.font.face ~= "") then
+			def.font = love.graphics.newFont(comdir .. def.font.face, fsize)
+		else
+			def.font = love.graphics.newFont(fsize)
+		end
+		combutt = def.buttons
+		for order, bdef in ipairs(def.buttons.options) do
+			if def.buttons.type == "rectangle" then
+				bw = screen.geometry.right * bdef.xspan
+				bh = screen.geometry.bottom * bdef.yspan
+				bl = (screen.geometry.right * bdef.xpos) - (bw / 2)
+				bt = (screen.geometry.bottom * bdef.ypos) - (bh / 2)
+				br = bl + bw
+				bb = bt + bh
+				btxw = def.font:getWidth(bdef.caption)
+				btxh = def.font:getHeight()
+				bdef.width = bw
+				bdef.height = bh
+				bdef.left = bl
+				bdef.top = bt
+				bdef.right = br
+				bdef.bottom = bb
+				bdef.txleft = bdef.left + (bdef.width / 2) - (btxw / 2)
+				bdef.txtop = bdef.top + (bdef.height / 2) - (btxh / 2)
+				bdef.xspan = nil
+				bdef.yspan = nil
+				bdef.xpos = nil
+				bdef.ypos = nil
+			end
+		end
+	end
+	menu = menudef
+	curmenlev = "main"
+end
 
 -- PUBLIC FUNCTIONS
 
 -- LOVE CONNECTION
 
-function vnl.init(width, height, bd, adef, charscale, dlgf, fontdef)
+function vnl.init(width, height, bd, adef, charscale, dlgf, fontdef, mendef)
 	-- BUILD SCREEN GEOMETRY
 	-- TABLE
 	screen = {
+		dpi = love.window.getDPIScale(),
 		geometry = {
 			left = 0,
 			top = 0,
@@ -1328,43 +1465,50 @@ function vnl.init(width, height, bd, adef, charscale, dlgf, fontdef)
 	dialdir = bd .. "dialogs/"
 	userdir = bd .. "user/"
 	-- DO STARTUP STUFF
-	cacheCommon(basedir)
+	cacheCommon()
+	getMenu(mendef)
 	getAreas(adef)
 	getCustom()
 	getFonts(fontdef)
 	getChars(charscale)
 	getProps()
-	getDialog(dlgf)
-	
+	firstdialog = dlgf
+	--'getDialog(dlgf)
+	dcontrol = "menu"
 end
 
 function vnl.draw(dt)
-	-- AREAS' BACKGROUNDS
-	for k, v in pairs(areas) do
-		drawbg[v.background.type](v)
-	end
-	-- BACK PROPS
-	for i, v in ipairs(visibleprops.back) do
-		drawprop(props[v.prid].states[v.stid])
-	end
-	-- CHARACTERS
-	for order, char in ipairs(visiblechars) do
-		drawChar(chars[char])
-	end
-	-- FRONT PROPS
-	for i, v in ipairs(visibleprops.front) do
-		drawProp(props[v.prid].states[v.stid])
-	end
-	-- DIALOG
-	if not prepro then
-		procdiag = preProcess[dcontrol](dialog[dindex])
-	end
-	drawDialog[dcontrol](procdiag)
-	-- AREAS' FOREGROUNDS
-	for _, v in pairs(areas) do
-		if v.foreground then
-			drawfg[v.foreground.type](v)
+	if dcontrol ~= "menu" then
+		
+		-- AREAS' BACKGROUNDS
+		for k, v in pairs(areas) do
+			drawbg[v.background.type](v)
 		end
+		-- BACK PROPS
+		for i, v in ipairs(visibleprops.back) do
+			drawprop(props[v.prid].states[v.stid])
+		end
+		-- CHARACTERS
+		for order, char in ipairs(visiblechars) do
+			drawChar(chars[char])
+		end
+		-- FRONT PROPS
+		for i, v in ipairs(visibleprops.front) do
+			drawProp(props[v.prid].states[v.stid])
+		end
+		-- DIALOG
+		if not prepro then
+			procdiag = preProcess[dcontrol](dialog[dindex])
+		end
+		drawDialog[dcontrol](procdiag)
+		-- AREAS' FOREGROUNDS
+		for _, v in pairs(areas) do
+			if v.foreground then
+				drawfg[v.foreground.type](v)
+			end
+		end
+	else
+		drawMenu()
 	end
 end
 
@@ -1436,7 +1580,6 @@ end
 
 function vnl.hideChar(cid)
 	local found, idx = false, 1
-	d.dolog("cid: " .. tostring(cid))
 	chars[cid].visible = false
 	while (not found) and (idx <= #visiblechars) do
 		if visiblechars[idx] == cid then
@@ -1537,7 +1680,6 @@ end
 function vnl.getCharRelativePos(cid)
 	return chars[cid].active.relx, chars[cid].active.rely
 end
-
 
 -- PROP-RELATED
 
@@ -1746,7 +1888,7 @@ function vnl.minusVar(var, val)
 	uservars[var] = val - uservars[var]
 end
 
-function vnl.valMinus(var, val)
+function vnl.varMinus(var, val)
 	uservars[var] = uservars[var] - val
 end
 
